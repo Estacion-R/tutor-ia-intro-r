@@ -1,0 +1,42 @@
+# === Secretos (NUNCA commitear) ===
+.Renviron
+**/.Renviron
+.secrets/
+**/.secrets/
+# Claves de service account u otras credenciales JSON
+*-sa.json
+*service-account*.json
+*credentials*.json
+gen-lang-client-*.json
+# Tokens de gargle/googlesheets4 cacheados
+.secrets-gs4/
+**/.gargle/
+# Allowlists con emails reales (repo PÚBLICO) → van por env var TUTOR_EMAILS /
+# TUTOR_STAFF. Se commitea solo config.example.yml.
+config.yml
+**/config.yml
+
+# Docs internos de gestión (estrategia, costos, nº de proyecto GCP, infra) →
+# NO van al repo público. Viven local + en el hub estacion-r-hub.
+ESTADO.md
+PLAN.md
+PLAN_POST_MVP.md
+ISSUES.md
+
+# === Datos con PII (logs de alumnos) ===
+*.log
+app/tutor.log
+app/auditoria.log
+
+# === Artefactos de deploy / sesión R ===
+rsconnect/
+**/rsconnect/
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+tools/output/
+
+# === Sistema ===
+.DS_Store
+Thumbs.db

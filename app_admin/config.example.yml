@@ -1,0 +1,9 @@
+# Plantilla de configuración del dashboard de analytics (copiar a config.yml).
+#
+# config.yml NO se commitea (emails reales). En hosting se pasa por la env var
+# TUTOR_STAFF (CSV), con prioridad sobre este archivo. Ver leer_staff() en app.R.
+# Solo staff (Pablo + docente). NUNCA incluir alumnos.
+
+staff_autorizado:
+  - docente@ejemplo.com
+  - admin@ejemplo.com

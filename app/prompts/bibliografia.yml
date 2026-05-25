@@ -1,0 +1,147 @@
+# Mapping concepto → bibliografía del curso Intro al Procesamiento de Datos con R
+#
+# El tutor usa este mapping para sugerir "Para profundizar: [link]" cuando toca
+# un concepto cubierto. SOLO links de acá · nunca inventar URLs.
+#
+# Estado: DRAFT 2026-05-18 · pendiente validación de Federico (qué materiales
+# usa realmente en clase y si los capítulos mapean bien a cada encuentro).
+#
+# Fuentes base (confirmadas con Pablo 2026-05-18):
+#   r4ds-es        https://es.r4ds.hadley.nz/                                          · R for Data Science (español)
+#   gente-sociable https://bitsandbricks.github.io/ciencia_de_datos_gente_sociable/   · Ciencia de datos para gente sociable (Vázquez Brust)
+#   eph-bookdown   https://diegokoz.github.io/R_EPH_bookdown/                          · R para el análisis de la EPH (Kozlowski)
+#   ggplot2-book   https://ggplot2-book.org/                                           · ggplot2: Elegant Graphics (Wickham) · EN INGLÉS
+#   tidyverse-style https://style.tidyverse.org/                                       · Tidyverse Style Guide · EN INGLÉS
+
+fuentes:
+  r4ds-es:        "https://es.r4ds.hadley.nz/"
+  gente-sociable: "https://bitsandbricks.github.io/ciencia_de_datos_gente_sociable/"
+  eph-bookdown:   "https://diegokoz.github.io/R_EPH_bookdown/"
+  ggplot2-book:   "https://ggplot2-book.org/"
+  tidyverse-style: "https://style.tidyverse.org/"
+
+# --- Mapping concepto → recurso -------------------------------------------
+# keywords: términos que, si aparecen en la respuesta del tutor, disparan el link.
+# Preferimos material en español; ggplot2-book y tidyverse-style son en inglés
+# (marcados) y se sugieren solo si no hay equivalente en español.
+
+conceptos:
+
+  # Encuentro 1 · Introducción + EPH
+  - keywords: [eph, encuesta permanente de hogares, indec]
+    titulo: "Conceptos principales de la EPH"
+    url: "https://diegokoz.github.io/R_EPH_bookdown/conceptos-principales-de-eph.html"
+    fuente: eph-bookdown
+  - keywords: [ciencia de datos, análisis de datos, qué es]
+    titulo: "¿Qué es la ciencia de datos?"
+    url: "https://bitsandbricks.github.io/ciencia_de_datos_gente_sociable/qué-es-la-ciencia-de-datos.html"
+    fuente: gente-sociable
+
+  # Encuentro 2 · Fundamentos R
+  - keywords: [primeros pasos, fundamentos, empezar con r, rstudio]
+    titulo: "Una presentación a toda marcha de R"
+    url: "https://bitsandbricks.github.io/ciencia_de_datos_gente_sociable/una-presentación-a-toda-marcha-de-r.html"
+    fuente: gente-sociable
+  - keywords: [introducción a r, intro r]
+    titulo: "Introducción a R (con datos de EPH)"
+    url: "https://diegokoz.github.io/R_EPH_bookdown/introduccion-a-r.html"
+    fuente: eph-bookdown
+  - keywords: [conceptos básicos, workflow, asignación, objetos]
+    titulo: "Conceptos básicos del flujo de trabajo"
+    url: "https://es.r4ds.hadley.nz/04-workflow-basics.html"
+    fuente: r4ds-es
+  - keywords: [vector, vectores, c()]
+    titulo: "Vectores"
+    url: "https://es.r4ds.hadley.nz/20-vectors.html"
+    fuente: r4ds-es
+  - keywords: [función, funciones, function]
+    titulo: "Funciones"
+    url: "https://es.r4ds.hadley.nz/19-functions.html"
+    fuente: r4ds-es
+  - keywords: [data frame, dataframe, tibble, data.frame]
+    titulo: "Tibbles (data frames)"
+    url: "https://es.r4ds.hadley.nz/10-tibble.html"
+    fuente: r4ds-es
+
+  # Encuentro 3 · Importar + tidyverse (pipa, select, filter)
+  - keywords: [importar, leer datos, readr, read_csv, haven, read_sav]
+    titulo: "Importación de datos"
+    url: "https://es.r4ds.hadley.nz/11-import.html"
+    fuente: r4ds-es
+  - keywords: [pipa, pipe, "|>", "%>%"]
+    titulo: "La pipa (pipe)"
+    url: "https://es.r4ds.hadley.nz/18-pipes.html"
+    fuente: r4ds-es
+  - keywords: [select, filter, transformación, dplyr, arrange]
+    titulo: "Transformación de datos (select, filter, mutate, summarise)"
+    url: "https://es.r4ds.hadley.nz/05-transform.html"
+    fuente: r4ds-es
+  - keywords: [poner los datos en forma, tidy, ordenar datos]
+    titulo: "Poniendo los datos en forma"
+    url: "https://bitsandbricks.github.io/ciencia_de_datos_gente_sociable/poniendo-los-datos-en-forma.html"
+    fuente: gente-sociable
+  - keywords: [paquete eph, library(eph), tasas, mercado de trabajo, organize_panels]
+    titulo: "Tidyverse y tasas básicas del mercado de trabajo"
+    url: "https://diegokoz.github.io/R_EPH_bookdown/tidyverse-y-tasas-basicas-del-mercado-de-trabajo.html"
+    fuente: eph-bookdown
+
+  # Encuentro 4 · mutate, case_when, summarise, group_by, .by
+  # (mismo capítulo de transformación de R4DS · ver "select, filter" arriba)
+  - keywords: [mutate, case_when, summarise, group_by, .by, agrupar]
+    titulo: "Transformación de datos (mutate, case_when, summarise, group_by)"
+    url: "https://es.r4ds.hadley.nz/05-transform.html"
+    fuente: r4ds-es
+
+  # Encuentro 5 · Proyectos RStudio, rutas relativas
+  - keywords: [proyecto, proyectos, rstudio project, ruta relativa, here]
+    titulo: "Proyectos (workflow)"
+    url: "https://es.r4ds.hadley.nz/08-workflow-projects.html"
+    fuente: r4ds-es
+  - keywords: [script, scripts, guardar código]
+    titulo: "Scripts (workflow)"
+    url: "https://es.r4ds.hadley.nz/06-workflow-scripts.html"
+    fuente: r4ds-es
+
+  # Encuentro 6 · ggplot2
+  - keywords: [ggplot2, ggplot, gráfico, visualización, geom_col, geom_bar]
+    titulo: "Visualización de datos con ggplot2"
+    url: "https://es.r4ds.hadley.nz/03-visualize.html"
+    fuente: r4ds-es
+  - keywords: [visualización social, gráfica social]
+    titulo: "Visualización (con datos sociales)"
+    url: "https://bitsandbricks.github.io/ciencia_de_datos_gente_sociable/visualización.html"
+    fuente: gente-sociable
+  - keywords: [gráfico de ingresos, distribución del ingreso, histograma eph]
+    titulo: "Gráficos y distribución del ingreso (EPH)"
+    url: "https://diegokoz.github.io/R_EPH_bookdown/graficos-y-distribucion-del-ingreso.html"
+    fuente: eph-bookdown
+  - keywords: [geom, capa, layer, geometría]
+    titulo: "Capas de ggplot2 (layers) · EN INGLÉS"
+    url: "https://ggplot2-book.org/layers.html"
+    fuente: ggplot2-book
+  - keywords: [escala, scale, color, fill, paleta]
+    titulo: "Escalas de color en ggplot2 · EN INGLÉS"
+    url: "https://ggplot2-book.org/scales-colour.html"
+    fuente: ggplot2-book
+  - keywords: [facet, facetas, facet_wrap, facet_grid]
+    titulo: "Facetas en ggplot2 · EN INGLÉS"
+    url: "https://ggplot2-book.org/facet.html"
+    fuente: ggplot2-book
+
+  # Transversales
+  - keywords: [estilo, style, convenciones, nombres de variables, snake_case]
+    titulo: "Guía de estilo de tidyverse · EN INGLÉS"
+    url: "https://style.tidyverse.org/"
+    fuente: tidyverse-style
+  - keywords: [eda, análisis exploratorio, exploración]
+    titulo: "Análisis exploratorio de datos (EDA)"
+    url: "https://es.r4ds.hadley.nz/07-eda.html"
+    fuente: r4ds-es
+  - keywords: [pobreza, línea de pobreza, indigencia]
+    titulo: "Cálculo de pobreza por línea (EPH)"
+    url: "https://diegokoz.github.io/R_EPH_bookdown/calculo-de-pobreza-por-linea.html"
+    fuente: eph-bookdown
+  - keywords: [panel, datos en panel, matriz de transición, transiciones]
+    titulo: "Pool de datos en panel y matrices de transición (EPH)"
+    url: "https://diegokoz.github.io/R_EPH_bookdown/pool-de-datos-en-panel-y-matrices-de-transicion.html"
+    fuente: eph-bookdown

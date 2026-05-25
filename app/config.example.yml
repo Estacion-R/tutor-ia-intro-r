@@ -1,0 +1,10 @@
+# Plantilla de configuración del Tutor de R (copiar a config.yml para uso local).
+#
+# config.yml NO se commitea (tiene emails reales). En hosting (Connect Cloud) la
+# allowlist se pasa por la env var TUTOR_EMAILS (CSV), que tiene prioridad sobre
+# este archivo. Ver leer_emails_autorizados() en app.R.
+
+emails_autorizados:
+  - docente@ejemplo.com
+  - alumno1@ejemplo.com
+  - alumno2@ejemplo.com
