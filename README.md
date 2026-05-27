@@ -19,7 +19,7 @@ Hecho por [Estación R](https://estacion-r.com) · escuela de datos especializad
 - [Shiny](https://shiny.posit.co/) + [shinychat](https://posit-dev.github.io/shinychat/) + [bslib](https://rstudio.github.io/bslib/)
 - [ellmer](https://ellmer.tidyverse.org/) como cliente LLM
 - **Modelo primario:** Google Gemini 2.5 Flash · **fallback:** Groq Llama 3.3 70B
-- Persistencia de logs (opcional): Google Sheets vía [googlesheets4](https://googlesheets4.tidyverse.org/)
+- Persistencia de logs (opcional): Google Sheet vía Apps Script web app (escritura) + [googlesheets4](https://googlesheets4.tidyverse.org/) (lectura del dashboard)
 
 ## Correr localmente
 
@@ -46,12 +46,15 @@ van como **variables de entorno** en la UI de Connect Cloud (no se commitean):
 | `GOOGLE_API_KEY` | Modelo primario (Gemini) |
 | `GROQ_API_KEY` | Modelo de fallback (Groq) |
 | `TUTOR_EMAILS` | Allowlist de alumnos (emails separados por coma) |
-| `TUTOR_LOG_SHEET_ID` | Id de la Google Sheet donde persistir el log (opcional) |
-| `GOOGLE_SA_JSON` | JSON de la service account con acceso a esa Sheet (opcional) |
+| `TUTOR_LOG_WEBHOOK_URL` | URL del Apps Script web app que persiste el log a la Sheet (opcional) |
+| `TUTOR_LOG_TOKEN` | Secreto compartido que valida ese Apps Script (opcional) |
 
-Sin `TUTOR_LOG_SHEET_ID`/`GOOGLE_SA_JSON`, la app loguea solo a un archivo local
-efímero. Con ellas, espeja cada evento a la Sheet para que el dashboard y el
-auditor sobrevivan a los reinicios.
+Sin `TUTOR_LOG_WEBHOOK_URL`/`TUTOR_LOG_TOKEN`, la app loguea solo a un archivo
+local efímero. Con ellas, espeja cada evento (vía POST a un Apps Script pegado a
+la Sheet) para que el dashboard y el auditor sobrevivan a los reinicios. El
+script vive en [`tools/apps-script-logger.gs`](tools/apps-script-logger.gs).
+Se usa Apps Script en vez de una service account porque la org bloquea las
+claves de SA.
 
 ## Privacidad
 

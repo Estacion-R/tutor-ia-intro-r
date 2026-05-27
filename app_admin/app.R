@@ -35,20 +35,10 @@ LOG_PATH         <- "../app/tutor.log"   # log local de la app del alumno (dev)
 # persistente (el tutor hosteado escribe ahí); si no, del archivo local.
 LOG_SHEET_ID <- Sys.getenv("TUTOR_LOG_SHEET_ID", "")
 usar_sheet   <- nzchar(LOG_SHEET_ID)
-
-if (usar_sheet) {
-  # Auth a Sheets: service account si está GOOGLE_SA_JSON (igual que el tutor),
-  # si no se usa el token interactivo/cacheado de gs4 (uso local de Pablo).
-  sa_json <- Sys.getenv("GOOGLE_SA_JSON", "")
-  if (nzchar(sa_json)) {
-    .tmp_sa <- tempfile(fileext = ".json")
-    writeLines(sa_json, .tmp_sa)
-    try(googlesheets4::gs4_auth(
-      path = .tmp_sa,
-      scopes = "https://www.googleapis.com/auth/spreadsheets.readonly"
-    ), silent = TRUE)
-  }
-}
+# Si usar_sheet, googlesheets4 autentica de forma interactiva (login de Google
+# del staff) la primera vez que lee la planilla. El dashboard corre local, así
+# que el flujo interactivo alcanza; no se usa service account (la org bloquea
+# las claves de SA, por eso el tutor escribe vía Apps Script).
 
 # Lee el log de la fuente vigente (planilla o archivo).
 leer_log <- function() {
