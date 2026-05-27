@@ -6,6 +6,11 @@ library(yaml)
 library(jsonlite)
 library(promises)
 
+# brand.yml es un Suggests de bslib que se carga dinámicamente al usar
+# bs_theme(brand = ...). Lo declaramos explícito para que rsconnect lo capture
+# en el manifest y Connect Cloud lo instale (si no, falla al iniciar la app).
+requireNamespace("brand.yml", quietly = TRUE)
+
 # --- Configuración ---
 # Emails autorizados: de la env var TUTOR_EMAILS (CSV) en hosting (Connect Cloud),
 # o de config.yml en local. config.yml NO se commitea (tiene emails reales) → en
