@@ -275,7 +275,7 @@ auditar_log <- function(log_path = "app/tutor.log",
 
 # --- Modo script -----------------------------------------------------------
 
-if (!interactive()) {
+if (!interactive() && Sys.getenv("AUDITAR_NO_MAIN") != "1") {
   args <- commandArgs(trailingOnly = TRUE)
   log_path <- if (length(args) >= 1) args[[1]] else "app/tutor.log"
   out_path <- if (length(args) >= 2) args[[2]] else "app/auditoria.log"

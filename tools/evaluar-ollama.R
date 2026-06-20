@@ -17,6 +17,9 @@ suppressPackageStartupMessages({
   library(jsonlite)
 })
 
+# Evita que el main de auditar-pedagogia.R (modo script) corra al source-earlo
+# como librería desde este harness (ver sentinel en auditar-pedagogia.R).
+Sys.setenv(AUDITAR_NO_MAIN = "1")
 source("tools/auditar-pedagogia.R")
 
 `%||%` <- function(a, b) if (is.null(a) || (length(a) == 1 && is.na(a))) b else a
