@@ -27,7 +27,6 @@ emails_autorizados <- leer_emails_autorizados()
 
 # System prompt = v3.1 + bibliografía del curso inyectada (Sprint 3).
 source("armar_prompt.R")
-source("normalizar.R")
 source("clasificar.R")  # clasificación liviana de consultas (analytics, issue #2)
 source("registrar.R")   # sink opcional de log a Google Sheet (persistencia en la nube)
 
@@ -39,21 +38,17 @@ system_prompt <- armar_system_prompt(
   biblio_path = "prompts/bibliografia.yml"
 )
 
-# Variante para el fallback Groq: mismo prompt + bloque de refuerzo imperativo.
-# Llama 3.3 no sigue el v3.1 con la fidelidad de Gemini; el refuerzo + el
-# normalizer de la respuesta acercan el fallback al baseline (issue #4).
-system_prompt_groq <- armar_system_prompt(
-  prompt_path   = "prompts/tutor-general-v3.1.md",
-  biblio_path   = "prompts/bibliografia.yml",
-  refuerzo_groq = TRUE
-)
-
-# Modelo primario. Pineado explícito (no el default de ellmer) para que bajo
-# tier pago un update de ellmer no nos cambie a un modelo más caro sin aviso.
+# Modelo primario: glm-5.2 vía Ollama Cloud Pro (decidido 2026-05-27 tras eval
+# F5: 7 ok / 0 menor vs 6 ok / 1 menor del baseline Gemini Flash). Pineado
+# explícito para no caer en defaults del cliente que cambien con updates.
+OLLAMA_MODEL    <- "glm-5.2"
+OLLAMA_BASE_URL <- "https://ollama.com"
+# Fallback cuando Ollama falla (rate limit, quota Pro agotada, network):
+# Gemini 2.5 Flash, el modelo que era primario hasta 2026-05-27. Validado en
+# producción semanas previas; con un fallback conocido reducimos riesgo durante
+# la transición a glm-5.2.
 GEMINI_MODEL <- "gemini-2.5-flash"
-# Modelo de fallback en Groq cuando Gemini falla (rate limit, quota, network).
-GROQ_MODEL <- "llama-3.3-70b-versatile"
-log_path   <- "tutor.log"
+log_path     <- "tutor.log"
 
 # --- Logging mínimo (F3, expandido en F4 · session_id en #2) ---
 # Escribe una línea JSON por evento. Falla en silencio si no puede escribir
@@ -76,26 +71,32 @@ log_event <- function(type, email = NA_character_, details = NULL,
   }, error = function(e) invisible(NULL))
 }
 
-# Crea el chat inicial con Gemini, cae a Groq si Gemini falla en el init.
+# Crea el chat inicial con Ollama (glm-5.2), cae a Gemini si Ollama falla.
 # Devuelve list(chat, provider) para que el server sepa con qué proveedor está.
 crear_chat <- function(system_prompt, email = NA_character_,
                        session_id = NA_character_) {
   tryCatch(
     {
+      chat <- ellmer::chat_ollama(
+        base_url      = OLLAMA_BASE_URL,
+        credentials   = function() list(
+          Authorization = paste("Bearer", Sys.getenv("OLLAMA_API_KEY"))
+        ),
+        model         = OLLAMA_MODEL,
+        system_prompt = system_prompt
+      )
+      log_event("chat_init", email = email, session_id = session_id,
+                details = list(provider = "ollama"))
+      list(chat = chat, provider = "ollama")
+    },
+    error = function(e) {
+      log_event("ollama_init_failed", email = email, session_id = session_id,
+                details = conditionMessage(e))
       chat <- ellmer::chat_google_gemini(model = GEMINI_MODEL,
                                          system_prompt = system_prompt)
       log_event("chat_init", email = email, session_id = session_id,
-                details = list(provider = "gemini"))
+                details = list(provider = "gemini", fallback = TRUE))
       list(chat = chat, provider = "gemini")
-    },
-    error = function(e) {
-      log_event("gemini_init_failed", email = email, session_id = session_id,
-                details = conditionMessage(e))
-      chat <- ellmer::chat_groq(model = GROQ_MODEL,
-                                system_prompt = system_prompt_groq)
-      log_event("chat_init", email = email, session_id = session_id,
-                details = list(provider = "groq", fallback = TRUE))
-      list(chat = chat, provider = "groq")
     }
   )
 }
@@ -351,7 +352,7 @@ server <- function(input, output, session) {
   }
 
   # Chat LLM (se crea al autenticarse, uno por sesión).
-  # Gemini primario · Groq fallback automático.
+  # Ollama glm-5.2 primario · Gemini 2.5 Flash fallback automático.
   chat     <- reactiveVal(NULL)
   provider <- reactiveVal(NULL)
 
@@ -375,24 +376,8 @@ server <- function(input, output, session) {
       input_text     = user_input
     ))
 
-    # Fallback Groq: respuesta sincrónica + normalización determinística
-    # (dialecto + pipe). Se pierde el streaming, pero es la ruta de emergencia
-    # (que además ya pierde el historial del intercambio). Gemini sigue
-    # streameando normal.
-    if (identical(provider(), "groq")) {
-      respuesta <- normalizar_rioplatense(
-        as.character(chat()$chat(user_input, echo = FALSE))
-      )
-      chat_append("chat", respuesta)
-      log_event("chat_response", email = email, session_id = sid, details = list(
-        provider       = provider(),
-        response_chars = nchar(respuesta),
-        response_text  = respuesta,
-        normalizado    = TRUE
-      ))
-      return(invisible(NULL))
-    }
-
+    # Ambos providers (ollama, gemini) soportan streaming nativo y siguen el
+    # v3.1 con suficiente fidelidad → ruta común, sin normalizer ni refuerzo.
     stream   <- chat()$stream_async(user_input)
     appended <- chat_append("chat", stream)
     promises::then(
@@ -418,11 +403,11 @@ server <- function(input, output, session) {
     invisible(appended)
   }
 
-  # Stream con fallback: si Gemini falla a mitad de conversación,
-  # recreamos chat con Groq y reintentamos el último input.
+  # Stream con fallback: si Ollama falla a mitad de conversación, recreamos
+  # chat con Gemini y reintentamos el último input.
   # Nota: en el fallback se pierde el historial del intercambio actual.
-  # TODO: preservar turns previos (ellmer::Chat$get_turns/append_turns)
-  # cuando se valide la semántica en práctica.
+  # TODO: preservar turns previos (ellmer::Chat$get_turns/append_turns) cuando
+  # se valide la semántica en práctica.
   observeEvent(input$chat_user_input, {
     req(chat())
     user_input <- input$chat_user_input
@@ -436,18 +421,18 @@ server <- function(input, output, session) {
           error    = conditionMessage(e)
         ))
 
-        if (identical(provider(), "gemini")) {
+        if (identical(provider(), "ollama")) {
           tryCatch(
             {
-              chat_nuevo <- ellmer::chat_groq(
-                model         = GROQ_MODEL,
-                system_prompt = system_prompt_groq
+              chat_nuevo <- ellmer::chat_google_gemini(
+                model         = GEMINI_MODEL,
+                system_prompt = system_prompt
               )
               chat(chat_nuevo)
-              provider("groq")
-              log_event("stream_fallback_to_groq", email = email, session_id = sid)
+              provider("gemini")
+              log_event("stream_fallback_to_gemini", email = email, session_id = sid)
 
-              # Reintento con Groq usando el mismo helper:
+              # Reintento con Gemini usando el mismo helper:
               # vuelve a loguear chat_message + chat_response.
               enviar_mensaje(user_input, email)
             },
