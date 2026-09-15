@@ -38,10 +38,13 @@ system_prompt <- armar_system_prompt(
   biblio_path = "prompts/bibliografia.yml"
 )
 
-# Modelo primario: glm-5.3 vía Ollama Cloud Pro (upgrade 2026-09-14 desde
-# glm-5.2; misma base model, ganancias de post-training de Z.ai). Pineado
-# explícito para no caer en defaults del cliente que cambien con updates.
-OLLAMA_MODEL    <- "glm-5.3"
+# Modelo primario: glm-5.2 vía Ollama Cloud Pro. Rollback 2026-09-15 desde
+# glm-5.3: eval F5 dio 5 ok/1 menor/1 moderada (vs 7/7 ok de glm-5.2) con
+# una regresión pedagógica real (tutor explicando en vez de guiar
+# socráticamente) y latencia P50 20-30s vs ~5s de glm-5.2. Ver ESTADO.md.
+# Pineado explícito para no caer en defaults del cliente que cambien con
+# updates.
+OLLAMA_MODEL    <- "glm-5.2"
 OLLAMA_BASE_URL <- "https://ollama.com"
 # Fallback cuando Ollama falla (rate limit, quota Pro agotada, network):
 # Gemini 2.5 Flash, el modelo que era primario hasta 2026-05-27. Validado en
@@ -71,7 +74,7 @@ log_event <- function(type, email = NA_character_, details = NULL,
   }, error = function(e) invisible(NULL))
 }
 
-# Crea el chat inicial con Ollama (glm-5.3), cae a Gemini si Ollama falla.
+# Crea el chat inicial con Ollama (glm-5.2), cae a Gemini si Ollama falla.
 # Devuelve list(chat, provider) para que el server sepa con qué proveedor está.
 crear_chat <- function(system_prompt, email = NA_character_,
                        session_id = NA_character_) {
@@ -352,7 +355,7 @@ server <- function(input, output, session) {
   }
 
   # Chat LLM (se crea al autenticarse, uno por sesión).
-  # Ollama glm-5.3 primario · Gemini 2.5 Flash fallback automático.
+  # Ollama glm-5.2 primario · Gemini 2.5 Flash fallback automático.
   chat     <- reactiveVal(NULL)
   provider <- reactiveVal(NULL)
 
