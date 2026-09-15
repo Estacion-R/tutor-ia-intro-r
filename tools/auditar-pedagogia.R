@@ -5,7 +5,10 @@
 # pendientes en una sola invocación para aprovechar cache_creation.
 #
 # Fallback: si Claude falla (rate limit, timeout, parse error), cae a Groq +
-# Llama 3.3 70B individual (gratis, 1k req/día) sin perder auditorías.
+# GPT-OSS 120B individual (gratis, ver límites de free tier) sin perder
+# auditorías. Actualizado 2026-09-15: llama-3.3-70b-versatile fue dado de
+# baja de Groq (404) y ya no aparece en /v1/models; no quedó ningún modelo
+# Llama de chat general disponible, gpt-oss-120b es el reemplazo más capaz.
 #
 # Modos de uso:
 #
@@ -26,7 +29,7 @@ suppressPackageStartupMessages({
 # --- Configuración ---------------------------------------------------------
 
 JUDGE_MODEL_CLAUDE <- "claude-haiku-4-5"
-JUDGE_MODEL_GROQ   <- "llama-3.3-70b-versatile"  # fallback
+JUDGE_MODEL_GROQ   <- "openai/gpt-oss-120b"  # fallback
 
 SYSTEM_PROMPT_PATH <- "tools/auditor-system-prompt.md"
 
