@@ -37,13 +37,22 @@ function doPost(e) {
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
     const row = COLS.map(function (c) {
       const v = ev[c];
-      return (v === undefined || v === null) ? '' : v;
+      return (v === undefined || v === null) ? '' : _seguro(v);
     });
-    sheet.appendRow(row);
+    // Lock: varias alumnas a la vez no pisan filas.
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try { sheet.appendRow(row); } finally { lock.releaseLock(); }
     return _json({ ok: true });
   } catch (err) {
     return _json({ ok: false, error: String(err) });
   }
+}
+
+// Evita inyección de fórmulas: el email de un login fallido es texto libre y
+// appendRow interpreta como fórmula lo que empieza con = + - @.
+function _seguro(v) {
+  return (typeof v === 'string' && /^[=+\-@]/.test(v)) ? "'" + v : v;
 }
 
 function _json(obj) {
