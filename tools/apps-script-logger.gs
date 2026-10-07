@@ -23,7 +23,7 @@
  * (la URL se mantiene).
  */
 
-const TOKEN = 'PEGA_ACA_UN_TOKEN_SECRETO'; // debe coincidir con TUTOR_LOG_TOKEN
+const TOKEN = 'Chicha91#'; // debe coincidir con TUTOR_LOG_TOKEN
 const COLS = ['ts', 'type', 'email', 'session_id', 'provider', 'categoria',
               'pide_respuesta', 'input_chars', 'response_chars', 'details'];
 
