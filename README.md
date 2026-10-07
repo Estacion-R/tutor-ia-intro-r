@@ -48,6 +48,7 @@ van como **variables de entorno** en la UI de Connect Cloud (no se commitean):
 | `TUTOR_EMAILS` | Allowlist de alumnos (emails separados por coma) |
 | `TUTOR_LOG_WEBHOOK_URL` | URL del Apps Script web app que persiste el log a la Sheet (opcional) |
 | `TUTOR_LOG_TOKEN` | Secreto compartido que valida ese Apps Script (opcional) |
+| `TUTOR_ID_SALT` | Sal secreta para derivar `alumna_id` del email (opcional; sin ella la columna queda vacía). Generar con `openssl rand -hex 16`, guardarla en un gestor de contraseñas y no cambiarla |
 | `TUTOR_COHORTE` | Etiqueta de cohorte que se anota en cada evento del log (opcional; default `intro-r-s2-2026`) |
 
 Sin `TUTOR_LOG_WEBHOOK_URL`/`TUTOR_LOG_TOKEN`, la app loguea solo a un archivo
@@ -58,15 +59,22 @@ El script escribe **por nombre de encabezado** (fila 1 de la Sheet): para sumar 
 columna basta agregar el encabezado con el nombre del campo de `.evento_payload`
 (`app/registrar.R`). Cada evento registra, además de ts/email/session_id: `model`,
 `prompt_version` (versión + hash del system prompt), `cohorte`, `turno`, `pregunta`,
-`respuesta` y `feedback` (👍/👎 de la alumna por respuesta). Test del payload:
-`Rscript tools/test-registrar.R`.
+`respuesta`, `feedback` (👍/👎 de la alumna por respuesta), `alumna_id`,
+`latencia_primer_token_ms`, `latencia_total_ms`, `fallback` y `error` (por turno).
+El log crudo es la fuente de verdad (append-only). De él se deriva, en R, la tabla
+de interacciones (una fila por turno: `app_admin/interacciones.R`; export sin emails con
+`Rscript tools/exportar-interacciones.R`). Tests: `Rscript tools/test-registrar.R`,
+`tools/test-interacciones.R` y `tools/test-metricas.R`.
 Se usa Apps Script en vez de una service account porque la org bloquea las
 claves de SA.
 
 ## Privacidad
 
-Las conversaciones se registran (90 días) para mejorar el tutor; hay un aviso
-explícito en el login y en la guía del alumno. La allowlist de emails y los
+Las conversaciones se registran y se acumulan, sin plazo de borrado, para mejorar
+el tutor; a pedido de una alumna se borran las suyas. Hay un aviso explícito en el
+login y en la guía del alumno. Para analizar y compartir se usa `alumna_id`, un id
+seudónimo derivado del email (HMAC con una sal secreta en la env var `TUTOR_ID_SALT`,
+nunca en el repo; si la sal cambia, cambian todos los ids). La allowlist de emails y los
 secretos nunca se commitean (van por variables de entorno).
 
 ## Licencia

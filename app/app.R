@@ -85,6 +85,7 @@ log_event <- function(type, email = NA_character_, details = NULL,
       type       = type,
       email      = email,
       session_id = session_id,
+      alumna_id      = alumna_id_de(email),
       prompt_version = PROMPT_VERSION,
       cohorte        = COHORTE
     )
@@ -117,7 +118,7 @@ crear_chat <- function(system_prompt, email = NA_character_,
     },
     error = function(e) {
       log_event("ollama_init_failed", email = email, session_id = session_id,
-                details = conditionMessage(e))
+                details = list(mensaje = conditionMessage(e), error = TRUE))
       chat <- ellmer::chat_google_gemini(model = GEMINI_MODEL,
                                          system_prompt = system_prompt)
       log_event("chat_init", email = email, session_id = session_id,
@@ -126,6 +127,24 @@ crear_chat <- function(system_prompt, email = NA_character_,
       list(chat = chat, provider = "gemini")
     }
   )
+}
+
+# Envuelve el stream async de ellmer para anotar cuándo llega el primer trozo de
+# texto (latencia al primer token, la que percibe la alumna). `marca` es un
+# environment donde se guarda `t_primer`. No altera el contenido del stream.
+medir_primer_token <- function(stream, marca) {
+  coro::async_generator(function() {
+    for (chunk in coro::await_each(stream)) {
+      if (is.null(marca$t_primer) && is.character(chunk) && nzchar(chunk)) {
+        marca$t_primer <- Sys.time()
+      }
+      coro::yield(chunk)
+    }
+  })()
+}
+ms_desde <- function(t0, t1) {
+  if (is.null(t1)) return(NA_integer_)
+  as.integer(round(as.numeric(difftime(t1, t0, units = "secs")) * 1000))
 }
 
 # --- Plantillas de ayuda (Sprint 4 post-MVP) ---
@@ -282,8 +301,10 @@ ui <- page_fillable(
           actionButton("login", "Entrar", class = "btn-primary w-100"),
           uiOutput("login_error"),
           tags$p(
-            "Al ingresar aceptás que tus conversaciones se guardan 90 días",
-            "para mejorar el tutor. No compartas datos personales sensibles.",
+            "Al ingresar aceptás que guardemos tus consultas para mejorar el",
+            "tutor. Si querés que borremos las tuyas, escribinos a",
+            "estacionr.com@gmail.com y lo hacemos.",
+            "No compartas datos personales sensibles.",
             style = "font-size: 0.75rem; color: #666; margin-top: 16px; text-align: center;"
           )
         )
@@ -465,6 +486,7 @@ server <- function(input, output, session) {
       model          = modl,
       turno          = t,
       reintento      = if (reintento) TRUE else NULL,
+      fallback       = !identical(prov, "ollama"),
       categoria      = clasificar_consulta(user_input),
       pide_respuesta = detectar_pedido_respuesta(user_input),
       input_chars    = nchar(user_input),
@@ -473,7 +495,9 @@ server <- function(input, output, session) {
 
     # Ambos providers (ollama, gemini) soportan streaming nativo y siguen el
     # v3.1 con suficiente fidelidad → ruta común, sin normalizer ni refuerzo.
-    stream   <- chat()$stream_async(user_input)
+    t0       <- Sys.time()
+    marca    <- new.env(parent = emptyenv())
+    stream   <- medir_primer_token(chat()$stream_async(user_input), marca)
     appended <- chat_append("chat", stream)
     promises::then(
       appended,
@@ -483,6 +507,9 @@ server <- function(input, output, session) {
           provider        = prov,
           model           = modl,
           turno           = t,
+          fallback        = !identical(prov, "ollama"),
+          latencia_primer_token_ms = ms_desde(t0, marca$t_primer),
+          latencia_total_ms        = ms_desde(t0, Sys.time()),
           response_chars  = nchar(last@text),
           response_text   = last@text
         ))
@@ -498,6 +525,7 @@ server <- function(input, output, session) {
             provider = prov,
             model    = modl,
             turno    = t,
+            error    = TRUE,
             reason   = conditionMessage(reason)
           ))
       }
@@ -522,7 +550,8 @@ server <- function(input, output, session) {
           provider = provider(),
           model    = modelo_de(provider()),
           turno    = turno(),
-          error    = conditionMessage(e)
+          error    = TRUE,
+          mensaje  = conditionMessage(e)
         ))
 
         if (identical(provider(), "ollama")) {
@@ -542,7 +571,8 @@ server <- function(input, output, session) {
             },
             error = function(e2) {
               log_event("fallback_failed", email = email, session_id = sid,
-                        details = conditionMessage(e2))
+                        details = list(turno = turno(), error = TRUE,
+                                       mensaje = conditionMessage(e2)))
               chat_append("chat",
                 "Hubo un problema técnico atendiendo tu consulta. Probá en un minuto.")
             }

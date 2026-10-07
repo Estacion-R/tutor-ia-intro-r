@@ -133,11 +133,11 @@ ui <- page_fillable(
       ),
       layout_columns(
         fill = FALSE,
-        value_box("Latencia P50", textOutput("vb_lat_p50"),
+        value_box("Latencia P50 (1er token / total)", textOutput("vb_lat_p50"),
                   showcase = bsicons::bs_icon("speedometer2")),
-        value_box("Latencia P95", textOutput("vb_lat_p95"),
+        value_box("Latencia P95 (1er token / total)", textOutput("vb_lat_p95"),
                   showcase = bsicons::bs_icon("speedometer")),
-        value_box("Fallbacks a Gemini", textOutput("vb_fallback"),
+        value_box("Fallbacks / errores", textOutput("vb_fallback"),
                   showcase = bsicons::bs_icon("shield-exclamation"), theme = "secondary"),
         value_box("Piden la respuesta", textOutput("vb_pide"),
                   showcase = bsicons::bs_icon("hand-index-thumb"), theme = "secondary")
@@ -220,9 +220,11 @@ server <- function(input, output, session) {
   output$vb_sesiones   <- renderText(fmt(m()$n_sesiones))
   output$vb_mensajes   <- renderText(fmt(m()$n_mensajes))
   output$vb_msgs_sesion <- renderText(fmt(m()$msgs_por_sesion, dec = 1))
-  output$vb_lat_p50    <- renderText(fmt(m()$lat_p50, dec = 1, sufijo = "s"))
-  output$vb_lat_p95    <- renderText(fmt(m()$lat_p95, dec = 1, sufijo = "s"))
-  output$vb_fallback   <- renderText(fmt(m()$n_fallback_msgs))
+  output$vb_lat_p50    <- renderText(paste(fmt(m()$lat1_p50, dec = 1, sufijo = "s"), "/",
+                                           fmt(m()$lat_p50, dec = 1, sufijo = "s")))
+  output$vb_lat_p95    <- renderText(paste(fmt(m()$lat1_p95, dec = 1, sufijo = "s"), "/",
+                                           fmt(m()$lat_p95, dec = 1, sufijo = "s")))
+  output$vb_fallback   <- renderText(paste(fmt(m()$n_fallback_msgs), "/", fmt(m()$n_errores)))
   output$vb_calificadas <- renderText({
     paste0(fmt(m()$n_fb_up + m()$n_fb_down), " de ", fmt(m()$n_resp),
            " (", fmt(m()$pct_calificadas), "%)")
@@ -246,6 +248,8 @@ server <- function(input, output, session) {
       columns = list(
         modelo     = colDef(name = "Modelo", minWidth = 140),
         respuestas = colDef(name = "Resp.", align = "center", width = 70),
+        p50_s      = colDef(name = "P50 total", align = "center", width = 85,
+                            format = colFormat(digits = 1, suffix = " s")),
         up         = colDef(name = "\U0001F44D", align = "center", width = 55),
         down       = colDef(name = "\U0001F44E", align = "center", width = 55),
         pct_up     = colDef(name = "% \U0001F44D", align = "center", width = 70,
@@ -301,7 +305,9 @@ server <- function(input, output, session) {
     reactable(
       d,
       columns = list(
-        email          = colDef(name = "Alumno", minWidth = 200),
+        alumna         = colDef(name = "Alumna", minWidth = 200),
+        fallbacks      = colDef(name = "Fallbacks", align = "center"),
+        errores        = colDef(name = "Errores", align = "center"),
         sesiones       = colDef(name = "Sesiones", align = "center"),
         mensajes       = colDef(name = "Mensajes", align = "center"),
         pide_respuesta = colDef(name = "Pidió respuesta", align = "center"),

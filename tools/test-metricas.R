@@ -64,15 +64,17 @@ cat("métricas (sin pruebas)\n")
 m <- calcular_metricas(d2)
 chequear("feedback: 1 up y 1 down", m$n_fb_up == 1 && m$n_fb_down == 1)
 chequear("respuestas = 4", m$n_resp == 4)
+chequear("latencia total P50 sale de timestamps (filas sin medición explícita)", !is.na(m$lat_p50))
+chequear("sin errores en el log sintético", m$n_errores == 0)
 chequear("% calificadas = 50", isTRUE(all.equal(m$pct_calificadas, 50)))
 chequear("fallbacks a Gemini = 1", m$n_fallback_msgs == 1)
 chequear("modelos: glm-5.2 (3), gemini (1)",
          identical(sort(m$df_modelo$respuestas), c(1L, 3L)) &&
          all(c("glm-5.2", "gemini-2.5-flash") %in% m$df_modelo$modelo))
-chequear("turnos: sA=3, sB=1 → prom 2", isTRUE(all.equal(m$turnos_prom, 2)))
-chequear("df_turnos suma 2 sesiones", sum(m$df_turnos$sesiones) == 2)
+chequear("turnos: sA=3, sB=1, sV=1 (vieja) → prom 5/3", isTRUE(all.equal(m$turnos_prom, 5/3)))
+chequear("df_turnos suma 3 sesiones", sum(m$df_turnos$sesiones) == 3)
 chequear("alumna A: 1 up 1 down", {
-  a <- m$df_por_alumno[m$df_por_alumno$email == "a@x.com", ]
+  a <- m$df_por_alumno[m$df_por_alumno$alumna == "a@x.com", ]
   a$up == 1 && a$down == 1 })
 
 cat("métricas (con pruebas, para contraste)\n")

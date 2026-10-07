@@ -6,7 +6,6 @@
 
 suppressPackageStartupMessages({
   library(dplyr)
-  library(tidyr)
   # jsonlite NO se adjunta (se usa jsonlite::fromJSON): adjuntarlo después de
   # shiny hace que jsonlite::validate() tape a shiny::validate() y todos los
   # gráficos del dashboard fallen con "is.character(txt) is not TRUE".
@@ -15,6 +14,10 @@ suppressPackageStartupMessages({
 `%||%` <- function(a, b) {
   if (is.null(a) || length(a) == 0 || (length(a) == 1 && is.na(a))) b else a
 }
+
+# Tabla derivada de interacciones (una fila por turno). Se sourcea desde el mismo
+# directorio que metricas.R.
+source(if (file.exists("interacciones.R")) "interacciones.R" else "app_admin/interacciones.R")
 
 # Esquema vacío: se devuelve cuando no hay log o está vacío, para que el
 # dashboard nunca rompa por columnas faltantes.
@@ -32,7 +35,15 @@ suppressPackageStartupMessages({
     model          = character(),
     turno          = integer(),
     feedback       = character(),
-    pregunta       = character()
+    pregunta       = character(),
+    respuesta      = character(),
+    alumna_id      = character(),
+    cohorte        = character(),
+    prompt_version = character(),
+    latencia_primer_token_ms = integer(),
+    latencia_total_ms        = integer(),
+    fallback       = logical(),
+    error          = logical()
   )
 }
 
@@ -62,7 +73,16 @@ cargar_log <- function(path) {
       model          = as.character(d$model %||% NA_character_),
       turno          = as.integer(d$turno %||% NA_integer_),
       feedback       = as.character(d$feedback %||% NA_character_),
-      pregunta       = as.character(d$input_text %||% NA_character_)
+      pregunta       = as.character(d$input_text %||% NA_character_),
+      respuesta      = as.character(d$response_text %||% NA_character_),
+      alumna_id      = as.character(e$alumna_id %||% NA_character_),
+      cohorte        = as.character(e$cohorte %||% NA_character_),
+      prompt_version = as.character(e$prompt_version %||% NA_character_),
+      latencia_primer_token_ms = as.integer(d$latencia_primer_token_ms %||% NA_integer_),
+      latencia_total_ms        = as.integer(d$latencia_total_ms %||% NA_integer_),
+      fallback       = as.logical(d$fallback %||% NA),
+      # en filas viejas `error` era el texto del error (string): cuenta como error
+      error          = if (is.null(d$error)) NA else (isTRUE(d$error) || is.character(d$error))
     )
   })
   filas <- Filter(Negate(is.null), filas)
@@ -100,7 +120,15 @@ cargar_log_sheet <- function(sheet_id, hoja = 1) {
     model          = as.character(raw$model),
     turno          = suppressWarnings(as.integer(raw$turno)),
     feedback       = as.character(raw$feedback),
-    pregunta       = as.character(raw$pregunta)
+    pregunta       = as.character(raw$pregunta),
+    respuesta      = as.character(raw$respuesta),
+    alumna_id      = as.character(raw$alumna_id),
+    cohorte        = as.character(raw$cohorte),
+    prompt_version = as.character(raw$prompt_version),
+    latencia_primer_token_ms = suppressWarnings(as.integer(raw$latencia_primer_token_ms)),
+    latencia_total_ms        = suppressWarnings(as.integer(raw$latencia_total_ms)),
+    fallback       = as.logical(raw$fallback),
+    error          = as.logical(raw$error)
   )
 }
 
@@ -109,25 +137,9 @@ cargar_log_sheet <- function(sheet_id, hoja = 1) {
 SHEET_LOG_COLS_DASH <- c("ts", "type", "email", "session_id", "provider",
                          "categoria", "pide_respuesta", "input_chars",
                          "response_chars", "model", "turno", "feedback",
-                         "pregunta")
-
-# Latencia por turno: empareja cada chat_response con el chat_message previo
-# de la misma sesión (los logs alternan message→response). Devuelve segundos.
-.latencias <- function(df) {
-  lat <- df |>
-    filter(type %in% c("chat_message", "chat_response"),
-           !is.na(session_id), !is.na(ts)) |>
-    arrange(session_id, ts) |>
-    group_by(session_id) |>
-    mutate(ts_msg = if_else(type == "chat_message", ts,
-                            as.POSIXct(NA, tz = "UTC"))) |>
-    fill(ts_msg, .direction = "down") |>
-    filter(type == "chat_response", !is.na(ts_msg)) |>
-    mutate(lat_s = as.numeric(difftime(ts, ts_msg, units = "secs"))) |>
-    ungroup() |>
-    filter(is.finite(lat_s), lat_s >= 0)
-  lat$lat_s
-}
+                         "pregunta", "respuesta", "alumna_id", "cohorte",
+                         "prompt_version", "latencia_primer_token_ms",
+                         "latencia_total_ms", "fallback", "error")
 
 # Quita del log las sesiones de prueba del staff: toda sesión con alguna pregunta
 # que empiece con "[TEST" (convención de las pruebas) se descarta entera, así no
@@ -142,111 +154,99 @@ excluir_pruebas <- function(df) {
 }
 
 # Calcula todas las métricas sobre la ventana [desde, hasta] (fechas Date o
-# coercibles). Devuelve una lista con escalares + data frames para graficar.
+# coercibles). Las métricas por turno salen de la tabla de interacciones
+# (armar_interacciones), no de los eventos sueltos. Devuelve una lista con
+# escalares + data frames para graficar.
 calcular_metricas <- function(df, desde = NULL, hasta = NULL) {
-  if (!is.null(desde)) df <- df |> filter(!is.na(ts), as.Date(ts) >= as.Date(desde))
-  if (!is.null(hasta)) df <- df |> filter(!is.na(ts), as.Date(ts) <= as.Date(hasta))
+  inter <- armar_interacciones(df, incluir_email = TRUE)
+  if (!is.null(desde)) inter <- inter |> filter(!is.na(ts), as.Date(ts) >= as.Date(desde))
+  if (!is.null(hasta)) inter <- inter |> filter(!is.na(ts), as.Date(ts) <= as.Date(hasta))
 
-  msgs <- df |> filter(type == "chat_message")
+  valido <- function(x) !is.na(x) & nzchar(x)
+  # Clave de alumna para el staff: el email (si está) y, si no, el id seudónimo.
+  inter <- inter |> mutate(alumna = ifelse(valido(email), email, alumna_id))
 
-  email_valido <- function(x) !is.na(x) & nzchar(x)
-  alumnos <- unique(msgs$email[email_valido(msgs$email)])
-  sesiones <- unique(msgs$session_id[!is.na(msgs$session_id)])
+  cuenta_na <- function(x) ifelse(is.na(x), "sin clasificar", x)
+  lat_total_s <- inter$latencia_total_ms[inter$respondido] / 1000
+  lat_1er_s   <- inter$latencia_primer_token_ms[inter$respondido] / 1000
+  p <- function(x, q) if (sum(!is.na(x))) as.numeric(stats::quantile(x, q, na.rm = TRUE)) else NA_real_
 
-  # Distribución por tipo de consulta (NA → "sin clasificar")
-  df_categoria <- msgs |>
-    mutate(categoria = ifelse(is.na(categoria), "sin clasificar", categoria)) |>
+  df_categoria <- inter |>
+    mutate(categoria = cuenta_na(categoria)) |>
     count(categoria, name = "n") |>
     arrange(desc(n))
 
-  # Mensajes por día (serie temporal)
-  df_por_dia <- msgs |>
+  df_por_dia <- inter |>
     filter(!is.na(ts)) |>
     mutate(dia = as.Date(ts)) |>
     count(dia, name = "n") |>
     arrange(dia)
 
-  # Tabla por alumno
-  df_por_alumno <- msgs |>
-    filter(email_valido(email)) |>
-    group_by(email) |>
+  df_por_alumno <- inter |>
+    filter(valido(alumna)) |>
+    group_by(alumna) |>
     summarise(
-      sesiones      = n_distinct(session_id[!is.na(session_id)]),
-      mensajes      = n(),
+      sesiones       = n_distinct(session_id),
+      mensajes       = n(),
       pide_respuesta = sum(pide_respuesta %in% TRUE),
-      ult_actividad = suppressWarnings(max(ts, na.rm = TRUE)),
+      up             = sum(feedback %in% "up"),
+      down           = sum(feedback %in% "down"),
+      fallbacks      = sum(fallback %in% TRUE),
+      errores        = sum(error %in% TRUE),
+      ult_actividad  = suppressWarnings(max(ts, na.rm = TRUE)),
       .groups = "drop"
     ) |>
-    left_join(
-      df |>
-        filter(type == "feedback", feedback %in% c("up", "down"),
-               email_valido(email)) |>
-        group_by(email) |>
-        summarise(up = sum(feedback == "up"), down = sum(feedback == "down"),
-                  .groups = "drop"),
-      by = "email") |>
-    mutate(up = coalesce(up, 0L), down = coalesce(down, 0L)) |>
     arrange(desc(mensajes))
 
-  # Mensajes por sesión (para promedio)
-  msgs_por_sesion <- msgs |>
-    filter(!is.na(session_id)) |>
-    count(session_id, name = "n")
-
-  lat <- .latencias(df)
-
-  # Fallback = consultas atendidas por Gemini (el primario es Ollama/glm-5.2).
-  n_fallback_msgs  <- sum(msgs$provider %in% "gemini")
-  n_fallback_event <- sum(df$type %in% "stream_fallback_to_gemini")
-  n_pide <- sum(msgs$pide_respuesta %in% TRUE)
-
-  # --- Modelo que respondió + feedback 👍/👎 (columnas desde 2026-10-06) ---
-  resp <- df |> filter(type == "chat_response")
-  fb   <- df |> filter(type == "feedback", feedback %in% c("up", "down"))
-  n_up   <- sum(fb$feedback == "up")
-  n_down <- sum(fb$feedback == "down")
-
-  df_modelo <- resp |>
-    mutate(modelo = ifelse(is.na(model), "sin dato (previo al 06/10)", model)) |>
-    group_by(modelo) |>
-    summarise(respuestas = n(), .groups = "drop") |>
-    left_join(
-      fb |>
-        mutate(modelo = ifelse(is.na(model), "sin dato (previo al 06/10)", model)) |>
-        group_by(modelo) |>
-        summarise(up = sum(feedback == "up"), down = sum(feedback == "down"),
-                  .groups = "drop"),
-      by = "modelo") |>
-    mutate(up = coalesce(up, 0L), down = coalesce(down, 0L),
-           pct_up = ifelse(up + down > 0, 100 * up / (up + down), NA_real_)) |>
-    arrange(desc(respuestas))
-
-  # Largo de las sesiones: turno máximo por sesión (1 = una sola consulta).
-  turno_max <- msgs |>
-    filter(!is.na(session_id), !is.na(turno)) |>
+  turno_max <- inter |>
     group_by(session_id) |>
-    summarise(turnos = suppressWarnings(max(turno)), .groups = "drop")
+    summarise(turnos = max(turno), .groups = "drop")
   df_turnos <- turno_max |>
     mutate(tramo = factor(ifelse(turnos >= 5, "5 o más", as.character(turnos)),
                           levels = c("1", "2", "3", "4", "5 o más"))) |>
     count(tramo, name = "sesiones", .drop = FALSE)
 
+  # Respuestas por modelo (las previas al 06/10 no traen el modelo).
+  df_modelo <- inter |>
+    filter(respondido) |>
+    mutate(modelo = ifelse(is.na(modelo), "sin dato (previo al 06/10)", modelo)) |>
+    group_by(modelo) |>
+    summarise(
+      respuestas = n(),
+      up         = sum(feedback %in% "up"),
+      down       = sum(feedback %in% "down"),
+      p50_s      = if (sum(!is.na(latencia_total_ms))) stats::median(latencia_total_ms, na.rm = TRUE) / 1000 else NA_real_,
+      .groups = "drop"
+    ) |>
+    mutate(pct_up = ifelse(up + down > 0, 100 * up / (up + down), NA_real_)) |>
+    arrange(desc(respuestas))
+
+  n_resp <- sum(inter$respondido)
+  n_up   <- sum(inter$feedback %in% "up")
+  n_down <- sum(inter$feedback %in% "down")
+  n_pide <- sum(inter$pide_respuesta %in% TRUE)
+  n_msgs <- nrow(inter)
+  msgs_por_sesion <- inter |> count(session_id, name = "n")
+
   list(
-    n_alumnos        = length(alumnos),
-    n_sesiones       = length(sesiones),
-    n_mensajes       = nrow(msgs),
+    n_alumnos        = n_distinct(inter$alumna[valido(inter$alumna)]),
+    n_sesiones       = n_distinct(inter$session_id),
+    n_mensajes       = n_msgs,
     msgs_por_sesion  = if (nrow(msgs_por_sesion)) mean(msgs_por_sesion$n) else NA_real_,
-    long_prom_input  = if (nrow(msgs)) mean(msgs$input_chars, na.rm = TRUE) else NA_real_,
-    n_fallback_msgs  = n_fallback_msgs,
-    n_fallback_event = n_fallback_event,
-    lat_p50          = if (length(lat)) stats::median(lat) else NA_real_,
-    lat_p95          = if (length(lat)) as.numeric(stats::quantile(lat, 0.95)) else NA_real_,
+    long_prom_input  = if (n_msgs) mean(inter$input_chars, na.rm = TRUE) else NA_real_,
+    n_fallback_msgs  = sum(inter$fallback %in% TRUE),
+    n_errores        = sum(inter$error %in% TRUE),
+    n_sin_respuesta  = sum(!inter$respondido),
+    lat_p50          = p(lat_total_s, 0.5),
+    lat_p95          = p(lat_total_s, 0.95),
+    lat1_p50         = p(lat_1er_s, 0.5),
+    lat1_p95         = p(lat_1er_s, 0.95),
     n_pide           = n_pide,
-    pct_pide         = if (nrow(msgs)) 100 * n_pide / nrow(msgs) else NA_real_,
-    n_resp           = nrow(resp),
+    pct_pide         = if (n_msgs) 100 * n_pide / n_msgs else NA_real_,
+    n_resp           = n_resp,
     n_fb_up          = n_up,
     n_fb_down        = n_down,
-    pct_calificadas  = if (nrow(resp)) 100 * (n_up + n_down) / nrow(resp) else NA_real_,
+    pct_calificadas  = if (n_resp) 100 * (n_up + n_down) / n_resp else NA_real_,
     pct_up           = if (n_up + n_down > 0) 100 * n_up / (n_up + n_down) else NA_real_,
     turnos_prom      = if (nrow(turno_max)) mean(turno_max$turnos) else NA_real_,
     df_modelo        = df_modelo,

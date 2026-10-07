@@ -68,9 +68,9 @@ El tutor responde mejor cuando le das **contexto + objetivo + lo que probaste**.
 
 **La regla:** si tu pregunta cabe en menos de una línea, probablemente le falta contexto. Decile al tutor qué intentaste, qué esperabas y qué pasó.
 
-**Qué guardamos y por cuánto tiempo:**
+**Qué guardamos:**
 
-Las conversaciones (tu mensaje y la respuesta del tutor) se guardan **90 días** después de terminado el curso, asociadas a tu email. Las usamos para:
+Guardamos tus consultas al tutor (tu mensaje y la respuesta), asociadas a tu email, para mejorar el tutor. Solo las ve el equipo docente. Las usamos para:
 
 - Mejorar el tutor en futuras cohortes (qué consultas son frecuentes, dónde se traba la gente).
 - Detectar problemas técnicos.
@@ -78,7 +78,7 @@ Las conversaciones (tu mensaje y la respuesta del tutor) se guardan **90 días**
 
 **Importante:** no compartas datos personales sensibles en el chat (DNI, datos bancarios, información confidencial de terceros). El chat no es el lugar para eso.
 
-Pasados los 90 días, las conversaciones se borran. Si querés que se borren antes, escribí a `estacionr.com@gmail.com`.
+Si querés que borremos las tuyas, escribinos a `estacionr.com@gmail.com` y lo hacemos.
 
 ---
 

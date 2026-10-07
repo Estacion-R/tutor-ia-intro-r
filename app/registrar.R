@@ -28,6 +28,21 @@ if (!exists("%||%")) {
   }
 }
 
+# Id seudónimo y estable de la alumna, derivado del email: HMAC-SHA256 del email
+# normalizado (minúsculas, sin espacios) con una sal secreta (env var
+# TUTOR_ID_SALT, nunca al repo público). Sirve para analizar y compartir sin
+# exponer mails. NA si no hay sal o no hay email: NO se emite un hash sin sal
+# (sería reversible probando emails). Si cambia la sal, cambian todos los ids.
+alumna_id_de <- function(email) {
+  sal <- Sys.getenv("TUTOR_ID_SALT", "")
+  if (!nzchar(sal) || is.null(email) || length(email) != 1 || is.na(email) ||
+      !nzchar(trimws(email))) {
+    return(NA_character_)
+  }
+  h <- openssl::sha256(charToRaw(tolower(trimws(email))), key = sal)
+  paste0("a", substr(as.character(h), 1, 12))
+}
+
 # Estado del módulo: URL+token si está activo, NULL si no.
 .tutor_log_url   <- NULL
 .tutor_log_token <- NULL
@@ -44,6 +59,9 @@ init_sheets_logging <- function() {
   .tutor_log_url   <<- url
   .tutor_log_token <<- token
   message("Logging persistente ACTIVO (Apps Script webhook).")
+  if (!nzchar(Sys.getenv("TUTOR_ID_SALT", ""))) {
+    message("alumna_id INACTIVO (sin TUTOR_ID_SALT): la columna queda vacía.")
+  }
   TRUE
 }
 
@@ -83,7 +101,13 @@ sheets_logging_activo <- function() !is.null(.tutor_log_url)
       turno          = d$turno %||% NA_integer_,
       pregunta       = d$input_text %||% NA_character_,
       respuesta      = d$response_text %||% NA_character_,
-      feedback       = d$feedback %||% NA_character_
+      feedback       = d$feedback %||% NA_character_,
+      # --- columnas nuevas (2026-10-07) ---
+      alumna_id      = evt$alumna_id %||% NA_character_,
+      latencia_primer_token_ms = d$latencia_primer_token_ms %||% NA_integer_,
+      latencia_total_ms        = d$latencia_total_ms %||% NA_integer_,
+      fallback       = if (is.null(d$fallback)) NA else isTRUE(d$fallback),
+      error          = if (is.null(d$error)) NA else isTRUE(d$error)
   )
   # jsonlite serializa NA numérico como el string "NA". Se omiten los campos
   # vacíos: el Apps Script deja en blanco el encabezado sin campo.
