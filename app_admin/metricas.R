@@ -7,7 +7,9 @@
 suppressPackageStartupMessages({
   library(dplyr)
   library(tidyr)
-  library(jsonlite)
+  # jsonlite NO se adjunta (se usa jsonlite::fromJSON): adjuntarlo después de
+  # shiny hace que jsonlite::validate() tape a shiny::validate() y todos los
+  # gráficos del dashboard fallen con "is.character(txt) is not TRUE".
 })
 
 `%||%` <- function(a, b) {
@@ -26,7 +28,11 @@ suppressPackageStartupMessages({
     categoria      = character(),
     pide_respuesta = logical(),
     input_chars    = integer(),
-    response_chars = integer()
+    response_chars = integer(),
+    model          = character(),
+    turno          = integer(),
+    feedback       = character(),
+    pregunta       = character()
   )
 }
 
@@ -52,7 +58,11 @@ cargar_log <- function(path) {
       categoria      = d$categoria %||% NA_character_,
       pide_respuesta = as.logical(d$pide_respuesta %||% NA),
       input_chars    = as.integer(d$input_chars %||% NA_integer_),
-      response_chars = as.integer(d$response_chars %||% NA_integer_)
+      response_chars = as.integer(d$response_chars %||% NA_integer_),
+      model          = as.character(d$model %||% NA_character_),
+      turno          = as.integer(d$turno %||% NA_integer_),
+      feedback       = as.character(d$feedback %||% NA_character_),
+      pregunta       = as.character(d$input_text %||% NA_character_)
     )
   })
   filas <- Filter(Negate(is.null), filas)
@@ -85,15 +95,21 @@ cargar_log_sheet <- function(sheet_id, hoja = 1) {
     categoria      = as.character(raw$categoria),
     pide_respuesta = as.logical(raw$pide_respuesta),
     input_chars    = suppressWarnings(as.integer(raw$input_chars)),
-    response_chars = suppressWarnings(as.integer(raw$response_chars))
+    response_chars = suppressWarnings(as.integer(raw$response_chars)),
+    # Columnas agregadas el 2026-10-06 (NA en filas previas).
+    model          = as.character(raw$model),
+    turno          = suppressWarnings(as.integer(raw$turno)),
+    feedback       = as.character(raw$feedback),
+    pregunta       = as.character(raw$pregunta)
   )
 }
 
-# Columnas esperadas en la planilla (debe coincidir con SHEET_LOG_COLS de
-# app/registrar.R, sin la columna `details` que el dashboard no usa).
+# Columnas esperadas en la planilla (nombres de columna de la Sheet = campos de
+# .evento_payload en app/registrar.R; el dashboard no usa `details`).
 SHEET_LOG_COLS_DASH <- c("ts", "type", "email", "session_id", "provider",
                          "categoria", "pide_respuesta", "input_chars",
-                         "response_chars")
+                         "response_chars", "model", "turno", "feedback",
+                         "pregunta")
 
 # Latencia por turno: empareja cada chat_response con el chat_message previo
 # de la misma sesión (los logs alternan message→response). Devuelve segundos.
@@ -111,6 +127,18 @@ SHEET_LOG_COLS_DASH <- c("ts", "type", "email", "session_id", "provider",
     ungroup() |>
     filter(is.finite(lat_s), lat_s >= 0)
   lat$lat_s
+}
+
+# Quita del log las sesiones de prueba del staff: toda sesión con alguna pregunta
+# que empiece con "[TEST" (convención de las pruebas) se descarta entera, así no
+# se cuelan sus login/chat_init/feedback.
+excluir_pruebas <- function(df) {
+  if (!nrow(df)) return(df)
+  sid_test <- unique(df$session_id[
+    df$type %in% "chat_message" & !is.na(df$pregunta) &
+      startsWith(df$pregunta, "[TEST") & !is.na(df$session_id)])
+  if (!length(sid_test)) return(df)
+  df[is.na(df$session_id) | !(df$session_id %in% sid_test), ]
 }
 
 # Calcula todas las métricas sobre la ventana [desde, hasta] (fechas Date o
@@ -149,6 +177,15 @@ calcular_metricas <- function(df, desde = NULL, hasta = NULL) {
       ult_actividad = suppressWarnings(max(ts, na.rm = TRUE)),
       .groups = "drop"
     ) |>
+    left_join(
+      df |>
+        filter(type == "feedback", feedback %in% c("up", "down"),
+               email_valido(email)) |>
+        group_by(email) |>
+        summarise(up = sum(feedback == "up"), down = sum(feedback == "down"),
+                  .groups = "drop"),
+      by = "email") |>
+    mutate(up = coalesce(up, 0L), down = coalesce(down, 0L)) |>
     arrange(desc(mensajes))
 
   # Mensajes por sesión (para promedio)
@@ -158,9 +195,41 @@ calcular_metricas <- function(df, desde = NULL, hasta = NULL) {
 
   lat <- .latencias(df)
 
-  n_fallback_msgs  <- sum(msgs$provider %in% "groq")
-  n_fallback_event <- sum(df$type %in% "stream_fallback_to_groq")
+  # Fallback = consultas atendidas por Gemini (el primario es Ollama/glm-5.2).
+  n_fallback_msgs  <- sum(msgs$provider %in% "gemini")
+  n_fallback_event <- sum(df$type %in% "stream_fallback_to_gemini")
   n_pide <- sum(msgs$pide_respuesta %in% TRUE)
+
+  # --- Modelo que respondió + feedback 👍/👎 (columnas desde 2026-10-06) ---
+  resp <- df |> filter(type == "chat_response")
+  fb   <- df |> filter(type == "feedback", feedback %in% c("up", "down"))
+  n_up   <- sum(fb$feedback == "up")
+  n_down <- sum(fb$feedback == "down")
+
+  df_modelo <- resp |>
+    mutate(modelo = ifelse(is.na(model), "sin dato (previo al 06/10)", model)) |>
+    group_by(modelo) |>
+    summarise(respuestas = n(), .groups = "drop") |>
+    left_join(
+      fb |>
+        mutate(modelo = ifelse(is.na(model), "sin dato (previo al 06/10)", model)) |>
+        group_by(modelo) |>
+        summarise(up = sum(feedback == "up"), down = sum(feedback == "down"),
+                  .groups = "drop"),
+      by = "modelo") |>
+    mutate(up = coalesce(up, 0L), down = coalesce(down, 0L),
+           pct_up = ifelse(up + down > 0, 100 * up / (up + down), NA_real_)) |>
+    arrange(desc(respuestas))
+
+  # Largo de las sesiones: turno máximo por sesión (1 = una sola consulta).
+  turno_max <- msgs |>
+    filter(!is.na(session_id), !is.na(turno)) |>
+    group_by(session_id) |>
+    summarise(turnos = suppressWarnings(max(turno)), .groups = "drop")
+  df_turnos <- turno_max |>
+    mutate(tramo = factor(ifelse(turnos >= 5, "5 o más", as.character(turnos)),
+                          levels = c("1", "2", "3", "4", "5 o más"))) |>
+    count(tramo, name = "sesiones", .drop = FALSE)
 
   list(
     n_alumnos        = length(alumnos),
@@ -174,6 +243,14 @@ calcular_metricas <- function(df, desde = NULL, hasta = NULL) {
     lat_p95          = if (length(lat)) as.numeric(stats::quantile(lat, 0.95)) else NA_real_,
     n_pide           = n_pide,
     pct_pide         = if (nrow(msgs)) 100 * n_pide / nrow(msgs) else NA_real_,
+    n_resp           = nrow(resp),
+    n_fb_up          = n_up,
+    n_fb_down        = n_down,
+    pct_calificadas  = if (nrow(resp)) 100 * (n_up + n_down) / nrow(resp) else NA_real_,
+    pct_up           = if (n_up + n_down > 0) 100 * n_up / (n_up + n_down) else NA_real_,
+    turnos_prom      = if (nrow(turno_max)) mean(turno_max$turnos) else NA_real_,
+    df_modelo        = df_modelo,
+    df_turnos        = df_turnos,
     df_categoria     = df_categoria,
     df_por_dia       = df_por_dia,
     df_por_alumno    = df_por_alumno

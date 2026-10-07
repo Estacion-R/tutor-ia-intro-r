@@ -99,11 +99,16 @@ ui <- page_fillable(
       actionLink("logout", "(salir)")
     ),
     layout_sidebar(
+      # No fillable: el contenido (muchas cards) scrollea en vez de comprimirse
+      # y superponerse en pantallas de laptop.
+      fillable = FALSE,
       sidebar = sidebar(
         title = "Filtros",
         dateRangeInput("rango", "Rango de fechas",
                        start = Sys.Date() - 30, end = Sys.Date(),
                        separator = " a ", language = "es", weekstart = 1),
+        checkboxInput("excl_pruebas",
+                      "Excluir sesiones de prueba (preguntas [TEST…)", TRUE),
         actionButton("recargar", "Recargar log", icon = icon("rotate"),
                      class = "btn-outline-primary btn-sm"),
         tags$hr(),
@@ -132,16 +137,38 @@ ui <- page_fillable(
                   showcase = bsicons::bs_icon("speedometer2")),
         value_box("Latencia P95", textOutput("vb_lat_p95"),
                   showcase = bsicons::bs_icon("speedometer")),
-        value_box("Fallbacks a Groq", textOutput("vb_fallback"),
+        value_box("Fallbacks a Gemini", textOutput("vb_fallback"),
                   showcase = bsicons::bs_icon("shield-exclamation"), theme = "secondary"),
         value_box("Piden la respuesta", textOutput("vb_pide"),
                   showcase = bsicons::bs_icon("hand-index-thumb"), theme = "secondary")
       ),
       layout_columns(
-        card(card_header("Tipo de consulta"), plotOutput("plot_categoria", height = "280px")),
-        card(card_header("Mensajes por día"), plotOutput("plot_por_dia", height = "280px"))
+        fill = FALSE,
+        value_box("Respuestas calificadas", textOutput("vb_calificadas"),
+                  showcase = bsicons::bs_icon("hand-thumbs-up"), theme = "primary"),
+        value_box("\U0001F44D Me sirvió", textOutput("vb_up"),
+                  showcase = bsicons::bs_icon("emoji-smile-fill")),
+        value_box("\U0001F44E No me sirvió", textOutput("vb_down"),
+                  showcase = bsicons::bs_icon("emoji-frown-fill")),
+        value_box("Turnos / sesión", textOutput("vb_turnos"),
+                  showcase = bsicons::bs_icon("arrow-repeat"), theme = "secondary")
       ),
-      card(card_header("Actividad por alumno"), reactableOutput("tabla_alumnos"))
+      layout_columns(
+        fill = FALSE,
+        card(card_header("Respuestas por modelo y feedback"),
+             reactableOutput("tabla_modelos"), min_height = 220),
+        card(card_header("Largo de las sesiones (turnos)"),
+             plotOutput("plot_turnos", height = "240px"), min_height = 300)
+      ),
+      layout_columns(
+        fill = FALSE,
+        card(card_header("Tipo de consulta"), plotOutput("plot_categoria", height = "280px"),
+             min_height = 340),
+        card(card_header("Mensajes por día"), plotOutput("plot_por_dia", height = "280px"),
+             min_height = 340)
+      ),
+      card(card_header("Actividad por alumno"), reactableOutput("tabla_alumnos"),
+           min_height = 340)
     )
   )
 )
@@ -172,7 +199,9 @@ server <- function(input, output, session) {
 
   m <- reactive({
     req(autorizado(), datos())
-    calcular_metricas(datos(), input$rango[1], input$rango[2])
+    df <- datos()
+    if (isTRUE(input$excl_pruebas)) df <- excluir_pruebas(df)
+    calcular_metricas(df, input$rango[1], input$rango[2])
   })
 
   # Aviso cuando no hay mensajes en la ventana
@@ -194,8 +223,50 @@ server <- function(input, output, session) {
   output$vb_lat_p50    <- renderText(fmt(m()$lat_p50, dec = 1, sufijo = "s"))
   output$vb_lat_p95    <- renderText(fmt(m()$lat_p95, dec = 1, sufijo = "s"))
   output$vb_fallback   <- renderText(fmt(m()$n_fallback_msgs))
+  output$vb_calificadas <- renderText({
+    paste0(fmt(m()$n_fb_up + m()$n_fb_down), " de ", fmt(m()$n_resp),
+           " (", fmt(m()$pct_calificadas), "%)")
+  })
+  output$vb_up         <- renderText({
+    paste0(fmt(m()$n_fb_up), if (!is.na(m()$pct_up)) paste0(" (", fmt(m()$pct_up), "%)") else "")
+  })
+  output$vb_down       <- renderText(fmt(m()$n_fb_down))
+  output$vb_turnos     <- renderText(fmt(m()$turnos_prom, dec = 1))
   output$vb_pide       <- renderText({
     paste0(fmt(m()$n_pide), " (", fmt(m()$pct_pide), "%)")
+  })
+
+  # Respuestas por modelo (+ feedback). Las respuestas previas al 06/10 no
+  # traen el modelo y se agrupan aparte.
+  output$tabla_modelos <- renderReactable({
+    d <- m()$df_modelo
+    validate(need(nrow(d) > 0, "Sin datos."))
+    reactable(
+      d,
+      columns = list(
+        modelo     = colDef(name = "Modelo", minWidth = 140),
+        respuestas = colDef(name = "Resp.", align = "center", width = 70),
+        up         = colDef(name = "\U0001F44D", align = "center", width = 55),
+        down       = colDef(name = "\U0001F44E", align = "center", width = 55),
+        pct_up     = colDef(name = "% \U0001F44D", align = "center", width = 70,
+                            format = colFormat(digits = 0, suffix = "%"))
+      ),
+      striped = TRUE, compact = TRUE
+    )
+  })
+
+  # Sesiones según cantidad de turnos (profundidad de la conversación)
+  output$plot_turnos <- renderPlot({
+    d <- m()$df_turnos
+    validate(need(nrow(d) > 0 && sum(d$sesiones) > 0,
+                  "Sin datos de turno (se registra desde el 06/10)."))
+    ggplot(d, aes(x = tramo, y = sesiones)) +
+      geom_col(fill = COLOR_AZUL, width = 0.7) +
+      geom_text(aes(label = sesiones), vjust = -0.4, size = 4, color = COLOR_NEGRO) +
+      labs(x = "Turnos en la sesión", y = "Sesiones") +
+      scale_y_continuous(breaks = function(l) unique(floor(pretty(l)))) +
+      expand_limits(y = max(d$sesiones) * 1.15) +
+      tema_ggplot
   })
 
   # Gráfico de tipo de consulta
@@ -234,6 +305,8 @@ server <- function(input, output, session) {
         sesiones       = colDef(name = "Sesiones", align = "center"),
         mensajes       = colDef(name = "Mensajes", align = "center"),
         pide_respuesta = colDef(name = "Pidió respuesta", align = "center"),
+        up             = colDef(name = "\U0001F44D", align = "center"),
+        down           = colDef(name = "\U0001F44E", align = "center"),
         ult_actividad  = colDef(name = "Última actividad", minWidth = 150)
       ),
       defaultSorted = list(mensajes = "desc"),
