@@ -21,11 +21,15 @@
  *
  * Si cambiás el código, "Administrar implementaciones" → editar → Nueva versión
  * (la URL se mantiene).
+ *
+ * ESQUEMA: este script escribe por NOMBRE de encabezado (fila 1 de la hoja), no
+ * por posición. Para sumar una columna: agregá el encabezado en la fila 1 con el
+ * mismo nombre que el campo del evento (app/registrar.R, .evento_payload). No hace
+ * falta tocar este código. Un encabezado sin campo en el evento queda vacío; un
+ * campo sin encabezado se ignora.
  */
 
-const TOKEN = 'Chicha91#'; // debe coincidir con TUTOR_LOG_TOKEN
-const COLS = ['ts', 'type', 'email', 'session_id', 'provider', 'categoria',
-              'pide_respuesta', 'input_chars', 'response_chars', 'details'];
+const TOKEN = 'PEGA_ACA_UN_TOKEN_SECRETO'; // debe coincidir con TUTOR_LOG_TOKEN
 
 function doPost(e) {
   try {
@@ -35,8 +39,9 @@ function doPost(e) {
     }
     const ev = body.event || {};
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
-    const row = COLS.map(function (c) {
-      const v = ev[c];
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const row = headers.map(function (h) {
+      const v = ev[String(h).trim()];
       return (v === undefined || v === null) ? '' : _seguro(v);
     });
     // Lock: varias alumnas a la vez no pisan filas.
@@ -49,8 +54,9 @@ function doPost(e) {
   }
 }
 
-// Evita inyección de fórmulas: el email de un login fallido es texto libre y
-// appendRow interpreta como fórmula lo que empieza con = + - @.
+// Evita inyección de fórmulas: el email de un login fallido y el texto de las
+// consultas son texto libre, y appendRow interpreta como fórmula lo que empieza
+// con = + - @.
 function _seguro(v) {
   return (typeof v === 'string' && /^[=+\-@]/.test(v)) ? "'" + v : v;
 }

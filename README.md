@@ -48,11 +48,18 @@ van como **variables de entorno** en la UI de Connect Cloud (no se commitean):
 | `TUTOR_EMAILS` | Allowlist de alumnos (emails separados por coma) |
 | `TUTOR_LOG_WEBHOOK_URL` | URL del Apps Script web app que persiste el log a la Sheet (opcional) |
 | `TUTOR_LOG_TOKEN` | Secreto compartido que valida ese Apps Script (opcional) |
+| `TUTOR_COHORTE` | Etiqueta de cohorte que se anota en cada evento del log (opcional; default `intro-r-s2-2026`) |
 
 Sin `TUTOR_LOG_WEBHOOK_URL`/`TUTOR_LOG_TOKEN`, la app loguea solo a un archivo
 local efímero. Con ellas, espeja cada evento (vía POST a un Apps Script pegado a
 la Sheet) para que el dashboard y el auditor sobrevivan a los reinicios. El
 script vive en [`tools/apps-script-logger.gs`](tools/apps-script-logger.gs).
+El script escribe **por nombre de encabezado** (fila 1 de la Sheet): para sumar una
+columna basta agregar el encabezado con el nombre del campo de `.evento_payload`
+(`app/registrar.R`). Cada evento registra, además de ts/email/session_id: `model`,
+`prompt_version` (versión + hash del system prompt), `cohorte`, `turno`, `pregunta`,
+`respuesta` y `feedback` (👍/👎 de la alumna por respuesta). Test del payload:
+`Rscript tools/test-registrar.R`.
 Se usa Apps Script en vez de una service account porque la org bloquea las
 claves de SA.
 

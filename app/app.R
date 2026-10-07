@@ -53,6 +53,26 @@ OLLAMA_BASE_URL <- "https://ollama.com"
 GEMINI_MODEL <- "gemini-2.5-flash"
 log_path     <- "tutor.log"
 
+# Metadatos que se anotan en cada evento del log para analizar y mejorar el
+# tutor (solo registro: no cambian el comportamiento del chat).
+# - PROMPT_VERSION: versión del prompt + hash corto del system prompt completo
+#   (prompt + bibliografía), así cualquier edición queda distinguible en la Sheet.
+# - COHORTE: etiqueta de la cohorte (override con la env var TUTOR_COHORTE).
+#   Cohorte e335c127 del sistema de cursos = Intro a R S2 2026.
+PROMPT_VERSION <- paste0(
+  "v3.1-", substr(rlang::hash(system_prompt), 1, 8)
+)
+COHORTE <- {
+  c_env <- Sys.getenv("TUTOR_COHORTE", "")
+  if (nzchar(c_env)) c_env else "intro-r-s2-2026"
+}
+# Id de modelo que responde, según el proveedor activo (el log guardaba solo
+# "ollama"/"gemini").
+modelo_de <- function(proveedor) {
+  switch(proveedor %||% "", ollama = OLLAMA_MODEL, gemini = GEMINI_MODEL,
+         NA_character_)
+}
+
 # --- Logging mínimo (F3, expandido en F4 · session_id en #2) ---
 # Escribe una línea JSON por evento. Falla en silencio si no puede escribir
 # para no romper la UX del alumno. `session_id` (Shiny session$token) permite
@@ -64,7 +84,9 @@ log_event <- function(type, email = NA_character_, details = NULL,
       ts         = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS3", tz = "UTC"),
       type       = type,
       email      = email,
-      session_id = session_id
+      session_id = session_id,
+      prompt_version = PROMPT_VERSION,
+      cohorte        = COHORTE
     )
     if (!is.null(details)) evt$details <- details
     cat(jsonlite::toJSON(evt, auto_unbox = TRUE, null = "null"), "\n",
@@ -89,7 +111,8 @@ crear_chat <- function(system_prompt, email = NA_character_,
         system_prompt = system_prompt
       )
       log_event("chat_init", email = email, session_id = session_id,
-                details = list(provider = "ollama"))
+                details = list(provider = "ollama",
+                               model = modelo_de("ollama")))
       list(chat = chat, provider = "ollama")
     },
     error = function(e) {
@@ -98,7 +121,8 @@ crear_chat <- function(system_prompt, email = NA_character_,
       chat <- ellmer::chat_google_gemini(model = GEMINI_MODEL,
                                          system_prompt = system_prompt)
       log_event("chat_init", email = email, session_id = session_id,
-                details = list(provider = "gemini", fallback = TRUE))
+                details = list(provider = "gemini",
+                               model = modelo_de("gemini"), fallback = TRUE))
       list(chat = chat, provider = "gemini")
     }
   )
@@ -221,6 +245,24 @@ ui <- page_fillable(
       }
       .ayuda-card .ayuda-icon { color: #405BFF; font-size: 1.1rem; }
       .ayuda-card .ayuda-titulo { font-weight: 500; }
+      .feedback-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 6px 12px;
+        font-size: 0.8rem;
+        color: #666;
+        border-top: 1px solid #EAEAEA;
+      }
+      .feedback-bar .btn {
+        padding: 2px 10px;
+        font-size: 0.95rem;
+        background: #FFFFFF;
+        border: 1px solid #DDE3EE;
+        border-radius: 6px;
+      }
+      .feedback-bar .btn:hover { border-color: #405BFF; }
     "))
   ),
 
@@ -282,6 +324,18 @@ ui <- page_fillable(
     chat_ui(
       id = "chat",
       messages = "**¡Hola!** Soy tu tutor de R del curso. ¿En qué andás?"
+    ),
+    # Feedback por respuesta: aparece cuando hay una respuesta sin calificar.
+    conditionalPanel(
+      condition = "output.pedir_feedback",
+      div(
+        class = "feedback-bar",
+        span("¿Te sirvió esta respuesta?"),
+        actionButton("fb_up", "\U0001F44D", class = "btn-sm",
+                     `aria-label` = "Me sirvió"),
+        actionButton("fb_down", "\U0001F44E", class = "btn-sm",
+                     `aria-label` = "No me sirvió")
+      )
     ),
     div(
       class = "disclaimer",
@@ -359,6 +413,35 @@ server <- function(input, output, session) {
   chat     <- reactiveVal(NULL)
   provider <- reactiveVal(NULL)
 
+  # Número de turno dentro de la sesión (1 = primera consulta). `turno_respondido`
+  # es el último turno con respuesta completa; `turno_calificado`, el último con
+  # 👍/👎. El feedback se asocia a `turno_respondido`.
+  turno            <- reactiveVal(0L)
+  turno_respondido <- reactiveVal(0L)
+  turno_calificado <- reactiveVal(0L)
+  # Último modelo/proveedor que respondió (el proveedor puede cambiar por fallback).
+  modelo_respondido    <- reactiveVal(NA_character_)
+  proveedor_respondido <- reactiveVal(NA_character_)
+
+  output$pedir_feedback <- reactive(turno_respondido() > turno_calificado())
+  outputOptions(output, "pedir_feedback", suspendWhenHidden = FALSE)
+
+  registrar_feedback <- function(valor) {
+    t <- isolate(turno_respondido())
+    if (t <= isolate(turno_calificado())) return(invisible(NULL))
+    log_event("feedback", email = isolate(email_usuario()), session_id = sid,
+              details = list(
+                provider = isolate(proveedor_respondido()),
+                model    = isolate(modelo_respondido()),
+                turno    = t,
+                feedback = valor
+              ))
+    turno_calificado(t)
+    showNotification("¡Gracias por tu opinión!", duration = 2, type = "message")
+  }
+  observeEvent(input$fb_up,   registrar_feedback("up"))
+  observeEvent(input$fb_down, registrar_feedback("down"))
+
   observeEvent(autenticado(), {
     if (autenticado()) {
       res <- crear_chat(system_prompt, email = email_usuario(), session_id = sid)
@@ -370,9 +453,18 @@ server <- function(input, output, session) {
   # Envía el input al LLM activo (chat() reactiveVal), loguea input y respuesta.
   # chat_append() devuelve una promesa; usamos promises::then() para capturar
   # el contenido completo de la respuesta cuando termine el stream.
-  enviar_mensaje <- function(user_input, email) {
+  # `reintento = TRUE` (reenvío tras fallback a Gemini) conserva el mismo turno.
+  enviar_mensaje <- function(user_input, email, reintento = FALSE) {
+    if (!reintento) turno(isolate(turno()) + 1L)
+    # Se capturan antes del stream: los callbacks de la promesa corren después.
+    t    <- isolate(turno())
+    prov <- isolate(provider())
+    modl <- modelo_de(prov)
     log_event("chat_message", email = email, session_id = sid, details = list(
-      provider       = provider(),
+      provider       = prov,
+      model          = modl,
+      turno          = t,
+      reintento      = if (reintento) TRUE else NULL,
       categoria      = clasificar_consulta(user_input),
       pide_respuesta = detectar_pedido_respuesta(user_input),
       input_chars    = nchar(user_input),
@@ -388,17 +480,24 @@ server <- function(input, output, session) {
       onFulfilled = function(value) {
         last <- chat()$last_turn()
         log_event("chat_response", email = email, session_id = sid, details = list(
-          provider        = provider(),
+          provider        = prov,
+          model           = modl,
+          turno           = t,
           response_chars  = nchar(last@text),
           response_text   = last@text
         ))
+        proveedor_respondido(prov)
+        modelo_respondido(modl)
+        turno_respondido(t)
       },
       onRejected = function(reason) {
         # En caso de rejection async, el tryCatch del observer ya intentó
         # el fallback. Acá solo dejamos rastro de que la promesa se rechazó.
         log_event("chat_response_rejected", email = email, session_id = sid,
           details = list(
-            provider = provider(),
+            provider = prov,
+            model    = modl,
+            turno    = t,
             reason   = conditionMessage(reason)
           ))
       }
@@ -421,6 +520,8 @@ server <- function(input, output, session) {
       error = function(e) {
         log_event("stream_failed", email = email, session_id = sid, details = list(
           provider = provider(),
+          model    = modelo_de(provider()),
+          turno    = turno(),
           error    = conditionMessage(e)
         ))
 
@@ -437,7 +538,7 @@ server <- function(input, output, session) {
 
               # Reintento con Gemini usando el mismo helper:
               # vuelve a loguear chat_message + chat_response.
-              enviar_mensaje(user_input, email)
+              enviar_mensaje(user_input, email, reintento = TRUE)
             },
             error = function(e2) {
               log_event("fallback_failed", email = email, session_id = sid,

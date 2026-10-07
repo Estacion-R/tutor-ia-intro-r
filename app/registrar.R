@@ -50,12 +50,20 @@ init_sheets_logging <- function() {
 # ¿Está activo el sink?
 sheets_logging_activo <- function() !is.null(.tutor_log_url)
 
-# Arma el payload del evento con el esquema fijo (details completo serializado).
+# Arma el payload del evento con el esquema fijo. Las primeras 10 columnas
+# (hasta `details`) mantienen su orden histórico: el Apps Script viejo, que
+# escribe por posición, sigue funcionando. Las columnas nuevas (model en
+# adelante) van al final y las escribe el Apps Script nuevo, que mapea por el
+# encabezado de la fila 1. `details` conserva el JSON completo (incluye los
+# textos) para compatibilidad; `pregunta`/`respuesta` son las mismas strings en
+# columna propia para leer la Sheet sin parsear JSON.
 .evento_payload <- function(evt) {
-  d <- if (is.list(evt$details)) evt$details else list()
-  list(
-    token = .tutor_log_token,
-    event = list(
+  d <- if (is.list(evt$details)) {
+    evt$details
+  } else if (is.character(evt$details) && length(evt$details) == 1) {
+    list(mensaje = evt$details)   # ej. error de ollama_init_failed
+  } else list()
+  ev <- list(
       ts             = evt$ts %||% NA_character_,
       type           = evt$type %||% NA_character_,
       email          = evt$email %||% NA_character_,
@@ -67,9 +75,20 @@ sheets_logging_activo <- function() !is.null(.tutor_log_url)
       response_chars = d$response_chars %||% NA_integer_,
       details        = if (length(d)) {
         as.character(jsonlite::toJSON(d, auto_unbox = TRUE, null = "null"))
-      } else NA_character_
-    )
+      } else NA_character_,
+      # --- columnas nuevas (2026-10-06) ---
+      model          = d$model %||% NA_character_,
+      prompt_version = evt$prompt_version %||% NA_character_,
+      cohorte        = evt$cohorte %||% NA_character_,
+      turno          = d$turno %||% NA_integer_,
+      pregunta       = d$input_text %||% NA_character_,
+      respuesta      = d$response_text %||% NA_character_,
+      feedback       = d$feedback %||% NA_character_
   )
+  # jsonlite serializa NA numérico como el string "NA". Se omiten los campos
+  # vacíos: el Apps Script deja en blanco el encabezado sin campo.
+  ev <- Filter(function(x) !(length(x) == 1 && is.na(x)), ev)
+  list(token = .tutor_log_token, event = ev)
 }
 
 # Espeja un evento al Apps Script FUERA del critical path (later::later, delay 0
