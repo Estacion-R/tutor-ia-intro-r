@@ -141,6 +141,31 @@ SHEET_LOG_COLS_DASH <- c("ts", "type", "email", "session_id", "provider",
                          "prompt_version", "latencia_primer_token_ms",
                          "latencia_total_ms", "fallback", "error")
 
+# Mapeo email → cohorte/etiqueta (ej. "exalumno"). Fuente única: la pestaña
+# `cohortes` de la misma Sheet del log (columnas email, cohorte, nota). Fuera de la
+# Sheet (log local): CSV con las mismas columnas. Falla blando → mapeo vacío
+# (queda la cohorte que registró la app).
+.COHORTES_VACIO <- function() tibble::tibble(email = character(), cohorte = character())
+.normalizar_cohortes <- function(raw) {
+  if (is.null(raw) || !nrow(raw) || !all(c("email", "cohorte") %in% names(raw))) {
+    return(.COHORTES_VACIO())
+  }
+  out <- tibble::tibble(email = as.character(raw$email), cohorte = as.character(raw$cohorte))
+  out[!is.na(out$email) & nzchar(trimws(out$email)) &
+        !is.na(out$cohorte) & nzchar(trimws(out$cohorte)), ]
+}
+cargar_cohortes_sheet <- function(sheet_id, hoja = "cohortes") {
+  raw <- tryCatch(googlesheets4::read_sheet(sheet_id, sheet = hoja, col_types = "c"),
+                  error = function(e) NULL)
+  .normalizar_cohortes(raw)
+}
+cargar_cohortes_csv <- function(path) {
+  if (!file.exists(path)) return(.COHORTES_VACIO())
+  raw <- tryCatch(utils::read.csv(path, stringsAsFactors = FALSE, encoding = "UTF-8"),
+                  error = function(e) NULL)
+  .normalizar_cohortes(raw)
+}
+
 # Quita del log las sesiones de prueba del staff: toda sesión con alguna pregunta
 # que empiece con "[TEST" (convención de las pruebas) se descarta entera, así no
 # se cuelan sus login/chat_init/feedback.
@@ -157,8 +182,10 @@ excluir_pruebas <- function(df) {
 # coercibles). Las métricas por turno salen de la tabla de interacciones
 # (armar_interacciones), no de los eventos sueltos. Devuelve una lista con
 # escalares + data frames para graficar.
-calcular_metricas <- function(df, desde = NULL, hasta = NULL) {
-  inter <- armar_interacciones(df, incluir_email = TRUE)
+calcular_metricas <- function(df, desde = NULL, hasta = NULL,
+                              cohortes = NULL, cohorte = NULL) {
+  inter <- armar_interacciones(df, incluir_email = TRUE, cohortes = cohortes)
+  if (!is.null(cohorte) && nzchar(cohorte)) inter <- inter |> filter(cohorte %in% !!cohorte)
   if (!is.null(desde)) inter <- inter |> filter(!is.na(ts), as.Date(ts) >= as.Date(desde))
   if (!is.null(hasta)) inter <- inter |> filter(!is.na(ts), as.Date(ts) <= as.Date(hasta))
 

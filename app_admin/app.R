@@ -45,6 +45,12 @@ leer_log <- function() {
   if (usar_sheet) cargar_log_sheet(LOG_SHEET_ID) else cargar_log(LOG_PATH)
 }
 
+# Mapeo email → cohorte/etiqueta (ej. "exalumno"): pestaña `cohortes` de la misma
+# Sheet; en local, app_admin/cohortes.csv (gitignorado; ver cohortes.example.csv).
+leer_cohortes <- function() {
+  if (usar_sheet) cargar_cohortes_sheet(LOG_SHEET_ID) else cargar_cohortes_csv("cohortes.csv")
+}
+
 # Paleta Estación R para los gráficos
 COLOR_AZUL   <- "#405BFF"
 COLOR_NEGRO  <- "#191919"
@@ -107,6 +113,7 @@ ui <- page_fillable(
         dateRangeInput("rango", "Rango de fechas",
                        start = Sys.Date() - 30, end = Sys.Date(),
                        separator = " a ", language = "es", weekstart = 1),
+        selectInput("cohorte", "Cohorte", choices = "Todas", selected = "Todas"),
         checkboxInput("excl_pruebas",
                       "Excluir sesiones de prueba (preguntas [TEST…)", TRUE),
         actionButton("recargar", "Recargar log", icon = icon("rotate"),
@@ -197,11 +204,28 @@ server <- function(input, output, session) {
   # Lee el log al iniciar y en cada click de "Recargar" (planilla o archivo)
   datos <- eventReactive(input$recargar, leer_log(), ignoreNULL = FALSE)
 
+  cohortes_map <- eventReactive(input$recargar, leer_cohortes(), ignoreNULL = FALSE)
+
+  # Log sin sesiones de prueba (si el filtro está activo)
+  df_filtrado <- reactive({
+    req(datos())
+    if (isTRUE(input$excl_pruebas)) excluir_pruebas(datos()) else datos()
+  })
+
+  # Opciones del selector de cohorte: las que hay en la tabla de interacciones
+  observe({
+    req(autorizado())
+    ch <- armar_interacciones(df_filtrado(), cohortes = cohortes_map())$cohorte
+    ch <- sort(unique(ch[!is.na(ch)]))
+    updateSelectInput(session, "cohorte", choices = c("Todas", ch),
+                      selected = isolate(input$cohorte) %||% "Todas")
+  })
+
   m <- reactive({
     req(autorizado(), datos())
-    df <- datos()
-    if (isTRUE(input$excl_pruebas)) df <- excluir_pruebas(df)
-    calcular_metricas(df, input$rango[1], input$rango[2])
+    coh <- if (identical(input$cohorte, "Todas")) NULL else input$cohorte
+    calcular_metricas(df_filtrado(), input$rango[1], input$rango[2],
+                      cohortes = cohortes_map(), cohorte = coh)
   })
 
   # Aviso cuando no hay mensajes en la ventana

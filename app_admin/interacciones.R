@@ -20,6 +20,7 @@ suppressPackageStartupMessages(library(dplyr))
     alumna_id      = character(),
     email          = character(),
     cohorte        = character(),
+    cohorte_registrada = character(),
     prompt_version = character(),
     categoria      = character(),
     pide_respuesta = logical(),
@@ -43,9 +44,24 @@ suppressPackageStartupMessages(library(dplyr))
 .primero <- function(x) { x <- x[!is.na(x)]; if (length(x)) x[[1]] else x[NA_integer_][1] }
 .ultimo  <- function(x) { x <- x[!is.na(x)]; if (length(x)) x[[length(x)]] else x[NA_integer_][1] }
 
+# Reetiqueta la cohorte según el mapeo email → cohorte (comparación sin
+# distinguir mayúsculas ni espacios). Sin mapeo o sin coincidencia: la original.
+.aplicar_cohortes <- function(email, cohorte, cohortes) {
+  if (is.null(cohortes) || !nrow(cohortes)) return(cohorte)
+  k_map <- tolower(trimws(cohortes$email))
+  nuevo <- cohortes$cohorte[match(tolower(trimws(email)), k_map)]
+  nuevo <- ifelse(!is.na(nuevo) & nzchar(trimws(nuevo)), trimws(nuevo), NA_character_)
+  dplyr::coalesce(nuevo, cohorte)
+}
+
 # df: log crudo (columnas de cargar_log()/cargar_log_sheet()).
 # incluir_email = FALSE (default) → tabla apta para compartir: solo `alumna_id`.
 # TRUE → agrega `email` (uso interno del panel de staff).
+#
+# cohortes: opcional, tibble(email, cohorte) con el mapeo email → cohorte/etiqueta
+# (pestaña `cohortes` de la Sheet o CSV local). Si el email del turno está en el
+# mapeo, `cohorte` toma ese valor; si no, queda la que registró la app. La que
+# registró la app se conserva SIEMPRE en `cohorte_registrada` (auditoría).
 #
 # Reglas:
 # - El turno sale de la columna `turno`; en filas viejas (previas al 06/10, sin
@@ -57,7 +73,7 @@ suppressPackageStartupMessages(library(dplyr))
 # - `fallback`: la respuesta salió de Gemini (respaldo). `error`: hubo algún error
 #   en el turno (stream falló, promesa rechazada, respaldo falló).
 # - `respondido = FALSE`: hubo consulta pero ninguna respuesta registrada.
-armar_interacciones <- function(df, incluir_email = FALSE) {
+armar_interacciones <- function(df, incluir_email = FALSE, cohortes = NULL) {
   if (!nrow(df)) return(.INTERACCIONES_VACIO())
 
   ev <- df |>
@@ -110,7 +126,9 @@ armar_interacciones <- function(df, incluir_email = FALSE) {
                NA_integer_))
     ) |>
     arrange(ts, session_id, turno) |>
-    select(ts, session_id, turno, alumna_id, email, cohorte, prompt_version,
+    mutate(cohorte_registrada = cohorte,
+           cohorte = .aplicar_cohortes(email, cohorte, cohortes)) |>
+    select(ts, session_id, turno, alumna_id, email, cohorte, cohorte_registrada, prompt_version,
            categoria, pide_respuesta, pregunta, respuesta, modelo, provider,
            latencia_primer_token_ms, latencia_total_ms, feedback, fallback,
            error, reintento, respondido, input_chars, response_chars)

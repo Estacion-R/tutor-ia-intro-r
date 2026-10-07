@@ -97,6 +97,24 @@ raw_viejo <- raw[, c("ts", "type", "email", "session_id", "provider")]
 utils::assignInNamespace("read_sheet", function(...) raw_viejo, "googlesheets4")
 chequear("Sheet con solo columnas viejas no rompe", is.na(cargar_log_sheet("fake")$model))
 
+cat("cohortes: lectura de la pestaña y filtro del panel\n")
+raw_coh <- tibble::tibble(email = c("a@x.com", NA, "z@x.com"),
+                          cohorte = c("exalumno", "x", ""), nota = "n")
+utils::assignInNamespace("read_sheet", function(...) raw_coh, "googlesheets4")
+mp <- cargar_cohortes_sheet("fake")
+chequear("lee email/cohorte y descarta filas incompletas", nrow(mp) == 1 && mp$cohorte == "exalumno")
+utils::assignInNamespace("read_sheet", function(...) stop("sin pestaña"), "googlesheets4")
+chequear("pestaña inexistente → mapeo vacío (no rompe)", nrow(cargar_cohortes_sheet("fake")) == 0)
+chequear("CSV inexistente → mapeo vacío", nrow(cargar_cohortes_csv(tempfile())) == 0)
+csv <- tempfile(fileext = ".csv"); writeLines(c("email,cohorte,nota", "a@x.com,exalumno,x"), csv)
+chequear("CSV con mapeo", cargar_cohortes_csv(csv)$cohorte == "exalumno")
+mm <- calcular_metricas(d2, cohortes = mp, cohorte = "exalumno")
+chequear("filtrar por cohorte deja solo a la alumna A (3 turnos)", mm$n_mensajes == 3 && mm$n_alumnos == 1)
+mm2 <- calcular_metricas(d2, cohortes = mp)
+chequear("sin filtro de cohorte cuentan todas (3 alumnas)", mm2$n_alumnos == 3)
+mm3 <- calcular_metricas(d2, cohortes = mp, cohorte = "no-existe")
+chequear("cohorte inexistente → 0 turnos", mm3$n_mensajes == 0)
+
 cat("log vacío no rompe\n")
 chequear("df vacío", nrow(excluir_pruebas(.LOG_VACIO())) == 0 &&
          calcular_metricas(.LOG_VACIO())$n_mensajes == 0)

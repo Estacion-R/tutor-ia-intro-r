@@ -63,7 +63,10 @@ columna basta agregar el encabezado con el nombre del campo de `.evento_payload`
 `latencia_primer_token_ms`, `latencia_total_ms`, `fallback` y `error` (por turno).
 El log crudo es la fuente de verdad (append-only). De él se deriva, en R, la tabla
 de interacciones (una fila por turno: `app_admin/interacciones.R`; export sin emails con
-`Rscript tools/exportar-interacciones.R`). Tests: `Rscript tools/test-registrar.R`,
+`Rscript tools/exportar-interacciones.R`). La cohorte se reetiqueta en esa tabla con un
+mapeo email → cohorte (pestaña `cohortes` de la misma Sheet, columnas `email`, `cohorte`,
+`nota`; en local, `app_admin/cohortes.csv`, gitignorado, ver `cohortes.example.csv`); la
+original queda en `cohorte_registrada`. Tests: `Rscript tools/test-registrar.R`,
 `tools/test-interacciones.R` y `tools/test-metricas.R`.
 Se usa Apps Script en vez de una service account porque la org bloquea las
 claves de SA.

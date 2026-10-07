@@ -84,6 +84,24 @@ chequear("sí trae alumna_id", "alumna_id" %in% names(pub))
 chequear("no aparece ningún email en ninguna celda",
          !any(grepl("@", unlist(lapply(pub, as.character)), fixed = TRUE)))
 
+cat("reetiquetado de cohorte por mapeo email → cohorte\n")
+mapa <- tibble::tibble(email = c(" B@X.com ", "otro@x.com", "vacio@x.com"),
+                       cohorte = c("exalumno", "c9", "  "))
+it2 <- armar_interacciones(df, incluir_email = TRUE, cohortes = mapa)
+chequear("email del mapeo (sin importar mayúsculas/espacios) → exalumno",
+         all(it2$cohorte[it2$email == "b@x.com"] == "exalumno"))
+chequear("conserva la cohorte original en cohorte_registrada",
+         all(it2$cohorte_registrada == it$cohorte))
+chequear("email fuera del mapeo → queda la cohorte registrada",
+         all(it2$cohorte[it2$email == "a@x.com"] == "c1"))
+chequear("etiqueta vacía en el mapeo se ignora",
+         identical(.aplicar_cohortes("vacio@x.com", "c1", mapa), "c1"))
+chequear("sin mapeo, cohorte = cohorte_registrada",
+         all(it$cohorte == it$cohorte_registrada, na.rm = TRUE))
+chequear("tabla para compartir trae ambas columnas y sin email",
+         all(c("cohorte", "cohorte_registrada") %in% names(armar_interacciones(df, cohortes = mapa))) &&
+         !"email" %in% names(armar_interacciones(df, cohortes = mapa)))
+
 cat("vacío\n")
 chequear("df vacío → tabla vacía con columnas", nrow(armar_interacciones(.LOG_VACIO())) == 0 &&
          "alumna_id" %in% names(armar_interacciones(.LOG_VACIO())))

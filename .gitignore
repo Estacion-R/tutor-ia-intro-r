@@ -24,6 +24,7 @@ PLAN_POST_MVP.md
 ISSUES.md
 
 # === Datos con PII (logs de alumnos) ===
+app_admin/cohortes.csv
 *.log
 app/tutor.log
 app/auditoria.log
