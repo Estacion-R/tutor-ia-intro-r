@@ -70,7 +70,8 @@ suppressPackageStartupMessages(library(dplyr))
 #   es UNA fila: `reintento = TRUE`, `error = TRUE`, `fallback = TRUE`.
 # - Latencia: la medida explícita (ms) de chat_response; si falta (filas viejas),
 #   se estima el total por diferencia de timestamps y el primer token queda NA.
-# - `fallback`: la respuesta salió de Gemini (respaldo). `error`: hubo algún error
+# - `fallback`: la respuesta salió del respaldo (provider `ollama_respaldo` = glm-5.3;
+#   en logs previos al 07/10, `gemini`). `error`: hubo algún error
 #   en el turno (stream falló, promesa rechazada, respaldo falló).
 # - `respondido = FALSE`: hubo consulta pero ninguna respuesta registrada.
 armar_interacciones <- function(df, incluir_email = FALSE, cohortes = NULL) {
@@ -108,7 +109,7 @@ armar_interacciones <- function(df, incluir_email = FALSE, cohortes = NULL) {
       .lat2          = .ultimo(latencia_total_ms[type == "chat_response"]),
       feedback       = .ultimo(feedback[type == "feedback" & feedback %in% c("up", "down")]),
       fallback       = any(fallback[type %in% c("chat_message", "chat_response")] %in% TRUE) |
-                       any(provider[type %in% c("chat_message", "chat_response")] %in% "gemini"),
+                       any(provider[type %in% c("chat_message", "chat_response")] %in% c("ollama_respaldo", "gemini")),
       error          = any(type %in% .TIPOS_ERROR) | any(error %in% TRUE),
       reintento      = sum(type == "chat_message") > 1,
       respondido     = any(type == "chat_response"),

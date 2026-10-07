@@ -11,6 +11,10 @@ library(promises)
 # en el manifest y Connect Cloud lo instale (si no, falla al iniciar la app).
 requireNamespace("brand.yml", quietly = TRUE)
 
+# La alumna no debe ver mensajes técnicos crudos (ej. errores de red de un stream
+# cortado): shiny los reemplaza por un texto genérico.
+options(shiny.sanitize.errors = TRUE)
+
 # --- Configuración ---
 # Emails autorizados: de la env var TUTOR_EMAILS (CSV) en hosting (Connect Cloud),
 # o de config.yml en local. config.yml NO se commitea (tiene emails reales) → en
@@ -45,12 +49,16 @@ system_prompt <- armar_system_prompt(
 # Pineado explícito para no caer en defaults del cliente que cambien con
 # updates.
 OLLAMA_MODEL    <- "glm-5.2"
-OLLAMA_BASE_URL <- "https://ollama.com"
-# Fallback cuando Ollama falla (rate limit, quota Pro agotada, network):
-# Gemini 2.5 Flash, el modelo que era primario hasta 2026-05-27. Validado en
-# producción semanas previas; con un fallback conocido reducimos riesgo durante
-# la transición a glm-5.2.
-GEMINI_MODEL <- "gemini-2.5-flash"
+# Overridable por env var SOLO para pruebas locales (servidor Ollama simulado);
+# en producción no se setea y apunta a Ollama Cloud.
+OLLAMA_BASE_URL <- Sys.getenv("OLLAMA_BASE_URL", "https://ollama.com")
+# Respaldo cuando glm-5.2 falla (modelo caído, 401, corte a mitad de respuesta):
+# glm-5.3, también en Ollama Cloud con la misma OLLAMA_API_KEY (dentro de la
+# suscripción, sin costo extra). Evaluado el 2026-09-15: 5 ok / 1 menor /
+# 1 moderada / 0 grave, con respuestas de 20-30 s; para una emergencia alcanza.
+# Decisión de Pablo (06/10/2026): NO se usa ningún proveedor fuera de la
+# suscripción de Ollama (se sacó Gemini de la cadena por la regla de costo).
+OLLAMA_FALLBACK_MODEL <- "glm-5.3"
 log_path     <- "tutor.log"
 
 # Metadatos que se anotan en cada evento del log para analizar y mejorar el
@@ -66,11 +74,12 @@ COHORTE <- {
   c_env <- Sys.getenv("TUTOR_COHORTE", "")
   if (nzchar(c_env)) c_env else "intro-r-s2-2026"
 }
-# Id de modelo que responde, según el proveedor activo (el log guardaba solo
-# "ollama"/"gemini").
+# Id de modelo que responde, según el proveedor activo. `provider` es "ollama"
+# (principal) u "ollama_respaldo" (glm-5.3). Los logs previos al 07/10 pueden
+# traer "gemini" (ya no se usa).
 modelo_de <- function(proveedor) {
-  switch(proveedor %||% "", ollama = OLLAMA_MODEL, gemini = GEMINI_MODEL,
-         NA_character_)
+  switch(proveedor %||% "", ollama = OLLAMA_MODEL,
+         ollama_respaldo = OLLAMA_FALLBACK_MODEL, NA_character_)
 }
 
 # --- Logging mínimo (F3, expandido en F4 · session_id en #2) ---
@@ -97,50 +106,96 @@ log_event <- function(type, email = NA_character_, details = NULL,
   }, error = function(e) invisible(NULL))
 }
 
-# Crea el chat inicial con Ollama (glm-5.2), cae a Gemini si Ollama falla.
-# Devuelve list(chat, provider) para que el server sepa con qué proveedor está.
+# Chat de ellmer contra Ollama Cloud para un modelo dado.
+crear_chat_ollama <- function(modelo, system_prompt) {
+  ellmer::chat_ollama(
+    base_url      = OLLAMA_BASE_URL,
+    credentials   = function() list(
+      Authorization = paste("Bearer", Sys.getenv("OLLAMA_API_KEY"))
+    ),
+    model         = modelo,
+    system_prompt = system_prompt
+  )
+}
+
+# Crea el chat inicial con glm-5.2; si falla (chat_ollama chequea el servidor al
+# crearse), prueba con el respaldo glm-5.3. Si ambos fallan devuelve chat = NULL
+# (la app reintenta al primer mensaje). Devuelve list(chat, provider).
 crear_chat <- function(system_prompt, email = NA_character_,
                        session_id = NA_character_) {
   tryCatch(
     {
-      chat <- ellmer::chat_ollama(
-        base_url      = OLLAMA_BASE_URL,
-        credentials   = function() list(
-          Authorization = paste("Bearer", Sys.getenv("OLLAMA_API_KEY"))
-        ),
-        model         = OLLAMA_MODEL,
-        system_prompt = system_prompt
-      )
+      chat <- crear_chat_ollama(OLLAMA_MODEL, system_prompt)
       log_event("chat_init", email = email, session_id = session_id,
-                details = list(provider = "ollama",
-                               model = modelo_de("ollama")))
+                details = list(provider = "ollama", model = modelo_de("ollama")))
       list(chat = chat, provider = "ollama")
     },
     error = function(e) {
       log_event("ollama_init_failed", email = email, session_id = session_id,
                 details = list(mensaje = conditionMessage(e), error = TRUE))
-      chat <- ellmer::chat_google_gemini(model = GEMINI_MODEL,
-                                         system_prompt = system_prompt)
-      log_event("chat_init", email = email, session_id = session_id,
-                details = list(provider = "gemini",
-                               model = modelo_de("gemini"), fallback = TRUE))
-      list(chat = chat, provider = "gemini")
+      tryCatch(
+        {
+          chat <- crear_chat_ollama(OLLAMA_FALLBACK_MODEL, system_prompt)
+          log_event("chat_init", email = email, session_id = session_id,
+                    details = list(provider = "ollama_respaldo",
+                                   model = modelo_de("ollama_respaldo"),
+                                   fallback = TRUE))
+          list(chat = chat, provider = "ollama_respaldo")
+        },
+        error = function(e2) {
+          log_event("fallback_failed", email = email, session_id = session_id,
+                    details = list(mensaje = conditionMessage(e2), error = TRUE))
+          list(chat = NULL, provider = NA_character_)
+        }
+      )
     }
   )
 }
 
-# Envuelve el stream async de ellmer para anotar cuándo llega el primer trozo de
-# texto (latencia al primer token, la que percibe la alumna). `marca` es un
-# environment donde se guarda `t_primer`. No altera el contenido del stream.
-medir_primer_token <- function(stream, marca) {
-  coro::async_generator(function() {
-    for (chunk in coro::await_each(stream)) {
-      if (is.null(marca$t_primer) && is.character(chunk) && nzchar(chunk)) {
-        marca$t_primer <- Sys.time()
-      }
-      coro::yield(chunk)
+# Envuelve el stream async de ellmer (un "generador" que devuelve una promesa por
+# cada trozo de texto) para dos cosas:
+# 1) anotar cuándo llega el primer trozo (latencia al primer token, la que percibe
+#    la alumna);
+# 2) manejar un corte: si el principal falla mientras se lee (típicamente a mitad
+#    de respuesta), se emite un aviso y se continúa con el modelo de respaldo EN EL
+#    MISMO stream. Un segundo chat_append() tras un stream fallido queda colgado en
+#    shinychat, y un generador de coro con tryCatch + dos for anidados tampoco
+#    continuaba (ambos probados en local), por eso se arma a mano con promesas.
+# - `marca`: environment con t_primer / t_primer_respaldo / corte.
+# - `respaldo`: función sin argumentos que pasa al respaldo y devuelve su stream
+#   (NULL si ya se está en respaldo: el error se propaga).
+# shinychat acepta cualquier función con clase "coro_generator_instance" que
+# devuelva el próximo trozo (o coro::exhausted()) envuelto en una promesa.
+stream_con_respaldo <- function(fuente, marca, respaldo = NULL) {
+  estado <- "principal"   # principal -> aviso -> respaldo
+  siguiente <- function(...) {
+    if (identical(estado, "aviso")) {
+      estado <<- "respaldo"
+      fuente <<- respaldo()
     }
-  })()
+    promises::then(
+      promises::promise_resolve(fuente()),
+      onFulfilled = function(chunk) {
+        if (!coro::is_exhausted(chunk) && is.character(chunk) && nzchar(chunk)) {
+          if (identical(estado, "respaldo")) {
+            if (is.null(marca$t_primer_respaldo)) marca$t_primer_respaldo <- Sys.time()
+          } else if (is.null(marca$t_primer)) {
+            marca$t_primer <- Sys.time()
+          }
+        }
+        chunk
+      },
+      onRejected = function(e) {
+        if (identical(estado, "principal") && !is.null(respaldo)) {
+          estado <<- "aviso"
+          marca$corte <- conditionMessage(e)
+          return("\n\n_Se cortó la respuesta del modelo principal; sigo con el de respaldo (puede tardar un poco más)._\n\n")
+        }
+        stop(e)
+      }
+    )
+  }
+  structure(siguiente, class = c("coro_generator_instance", "function"))
 }
 ms_desde <- function(t0, t1) {
   if (is.null(t1)) return(NA_integer_)
@@ -430,7 +485,7 @@ server <- function(input, output, session) {
   }
 
   # Chat LLM (se crea al autenticarse, uno por sesión).
-  # Ollama glm-5.2 primario · Gemini 2.5 Flash fallback automático.
+  # Ollama glm-5.2 primario · glm-5.3 (Ollama) como respaldo automático.
   chat     <- reactiveVal(NULL)
   provider <- reactiveVal(NULL)
 
@@ -471,16 +526,69 @@ server <- function(input, output, session) {
     }
   })
 
+  # Crea el chat de respaldo (glm-5.3), le hereda el historial y deja la sesión en
+  # respaldo (provider). Un stream fallido deja en ellmer el turno del usuario y
+  # un turno parcial del asistente (a veces con texto cortado): se descartan,
+  # porque la consulta se vuelve a enviar y no debe quedar duplicada. Una vez en
+  # respaldo, la sesión sigue en respaldo.
+  pasar_a_respaldo <- function(email) {
+    chat_viejo <- isolate(chat())
+    chat_nuevo <- crear_chat_ollama(OLLAMA_FALLBACK_MODEL, system_prompt)
+    tryCatch({
+      turnos <- chat_viejo$get_turns()
+      repeat {
+        n <- length(turnos)
+        if (n == 0) break
+        ult <- turnos[[n]]
+        if (any(grepl("Partial", class(ult))) || identical(ult@role, "user")) {
+          turnos <- turnos[-n]
+        } else break
+      }
+      chat_nuevo$set_turns(turnos)
+    }, error = function(e) invisible(NULL))
+    chat(chat_nuevo)
+    provider("ollama_respaldo")
+    log_event("stream_fallback_to_respaldo", email = email, session_id = sid,
+              details = list(model = OLLAMA_FALLBACK_MODEL, turno = isolate(turno())))
+    chat_nuevo
+  }
+
+  # Falla SÍNCRONA del principal (al iniciar la respuesta): pasa al respaldo y
+  # reintenta la consulta. Si ya estaba en respaldo, avisa a la alumna.
+  reintentar_con_respaldo <- function(user_input, email) {
+    if (!identical(isolate(provider()), "ollama")) {
+      chat_append("chat",
+        "El servicio está saturado en este momento. Probá en un minuto.")
+      return(invisible(NULL))
+    }
+    tryCatch(
+      {
+        pasar_a_respaldo(email)
+        chat_append("chat",
+          "_El modelo principal no respondió; sigo con el de respaldo (puede tardar un poco más)._")
+        enviar_mensaje(user_input, email, reintento = TRUE)
+      },
+      error = function(e2) {
+        log_event("fallback_failed", email = email, session_id = sid,
+                  details = list(turno = isolate(turno()), error = TRUE,
+                                 mensaje = conditionMessage(e2)))
+        chat_append("chat",
+          "Hubo un problema técnico atendiendo tu consulta. Probá en un minuto.")
+      }
+    )
+    invisible(NULL)
+  }
+
   # Envía el input al LLM activo (chat() reactiveVal), loguea input y respuesta.
   # chat_append() devuelve una promesa; usamos promises::then() para capturar
   # el contenido completo de la respuesta cuando termine el stream.
-  # `reintento = TRUE` (reenvío tras fallback a Gemini) conserva el mismo turno.
+  # `reintento = TRUE` (reenvío tras pasar al respaldo) conserva el mismo turno.
   enviar_mensaje <- function(user_input, email, reintento = FALSE) {
     if (!reintento) turno(isolate(turno()) + 1L)
     # Se capturan antes del stream: los callbacks de la promesa corren después.
-    t    <- isolate(turno())
-    prov <- isolate(provider())
-    modl <- modelo_de(prov)
+    t        <- isolate(turno())
+    prov     <- isolate(provider())
+    modl     <- modelo_de(prov)
     log_event("chat_message", email = email, session_id = sid, details = list(
       provider       = prov,
       model          = modl,
@@ -493,94 +601,95 @@ server <- function(input, output, session) {
       input_text     = user_input
     ))
 
-    # Ambos providers (ollama, gemini) soportan streaming nativo y siguen el
+    # Ambos modelos (glm-5.2 y glm-5.3) soportan streaming nativo y siguen el
     # v3.1 con suficiente fidelidad → ruta común, sin normalizer ni refuerzo.
     t0       <- Sys.time()
     marca    <- new.env(parent = emptyenv())
-    stream   <- medir_primer_token(chat()$stream_async(user_input), marca)
+    # Estado de la respuesta en curso: cambia si el stream se corta y se pasa al
+    # respaldo (todo dentro del mismo stream, ver stream_con_respaldo).
+    marca$prov     <- prov
+    marca$modl     <- modl
+    marca$chat_obj <- isolate(chat())
+    respaldo <- if (identical(prov, "ollama")) function() {
+      log_event("chat_response_rejected", email = email, session_id = sid,
+        details = list(provider = prov, model = modl, turno = t, error = TRUE,
+                       reason = marca$corte))
+      nuevo <- pasar_a_respaldo(email)
+      marca$prov     <- "ollama_respaldo"
+      marca$modl     <- modelo_de("ollama_respaldo")
+      marca$chat_obj <- nuevo
+      nuevo$stream_async(user_input)
+    }
+    stream   <- stream_con_respaldo(marca$chat_obj$stream_async(user_input), marca, respaldo)
     appended <- chat_append("chat", stream)
     promises::then(
       appended,
       onFulfilled = function(value) {
-        last <- chat()$last_turn()
+        last <- marca$chat_obj$last_turn()
         log_event("chat_response", email = email, session_id = sid, details = list(
-          provider        = prov,
-          model           = modl,
+          provider        = marca$prov,
+          model           = marca$modl,
           turno           = t,
-          fallback        = !identical(prov, "ollama"),
-          latencia_primer_token_ms = ms_desde(t0, marca$t_primer),
+          fallback        = !identical(marca$prov, "ollama"),
+          # Si hubo corte y respaldo, el "primer token" es el del principal (lo que
+          # vio la alumna primero); el total incluye el tiempo del respaldo.
+          latencia_primer_token_ms = ms_desde(t0, marca$t_primer %||% marca$t_primer_respaldo),
           latencia_total_ms        = ms_desde(t0, Sys.time()),
           response_chars  = nchar(last@text),
           response_text   = last@text
         ))
-        proveedor_respondido(prov)
-        modelo_respondido(modl)
+        proveedor_respondido(marca$prov)
+        modelo_respondido(marca$modl)
         turno_respondido(t)
       },
       onRejected = function(reason) {
-        # En caso de rejection async, el tryCatch del observer ya intentó
-        # el fallback. Acá solo dejamos rastro de que la promesa se rechazó.
+        # Falló también el respaldo (o ya se estaba en respaldo): no hay más a
+        # dónde pasar. shinychat muestra un aviso genérico (errores saneados).
         log_event("chat_response_rejected", email = email, session_id = sid,
           details = list(
-            provider = prov,
-            model    = modl,
+            provider = marca$prov,
+            model    = marca$modl,
             turno    = t,
             error    = TRUE,
             reason   = conditionMessage(reason)
           ))
+        # shinychat ya mostró su aviso genérico (en inglés); se suma uno propio.
+        chat_append("chat",
+          "Hubo un problema técnico atendiendo tu consulta. Probá en un minuto.")
       }
     )
     invisible(appended)
   }
 
-  # Stream con fallback: si Ollama falla a mitad de conversación, recreamos
-  # chat con Gemini y reintentamos el último input.
-  # Nota: en el fallback se pierde el historial del intercambio actual.
-  # TODO: preservar turns previos (ellmer::Chat$get_turns/append_turns) cuando
-  # se valide la semántica en práctica.
+  # Si Ollama falla al iniciar la respuesta, pasamos al respaldo y reintentamos
+  # el último input (con el historial previo).
   observeEvent(input$chat_user_input, {
-    req(chat())
     user_input <- input$chat_user_input
     email      <- email_usuario()
+
+    # Si el chat no pudo crearse al autenticarse (Ollama caído), se reintenta ahora.
+    if (is.null(chat())) {
+      res <- crear_chat(system_prompt, email = email, session_id = sid)
+      chat(res$chat)
+      provider(res$provider)
+    }
+    if (is.null(chat())) {
+      chat_append("chat",
+        "El servicio no está disponible en este momento. Probá en un minuto.")
+      return(invisible(NULL))
+    }
 
     tryCatch(
       enviar_mensaje(user_input, email),
       error = function(e) {
         log_event("stream_failed", email = email, session_id = sid, details = list(
-          provider = provider(),
-          model    = modelo_de(provider()),
-          turno    = turno(),
+          provider = isolate(provider()),
+          model    = modelo_de(isolate(provider())),
+          turno    = isolate(turno()),
           error    = TRUE,
           mensaje  = conditionMessage(e)
         ))
-
-        if (identical(provider(), "ollama")) {
-          tryCatch(
-            {
-              chat_nuevo <- ellmer::chat_google_gemini(
-                model         = GEMINI_MODEL,
-                system_prompt = system_prompt
-              )
-              chat(chat_nuevo)
-              provider("gemini")
-              log_event("stream_fallback_to_gemini", email = email, session_id = sid)
-
-              # Reintento con Gemini usando el mismo helper:
-              # vuelve a loguear chat_message + chat_response.
-              enviar_mensaje(user_input, email, reintento = TRUE)
-            },
-            error = function(e2) {
-              log_event("fallback_failed", email = email, session_id = sid,
-                        details = list(turno = turno(), error = TRUE,
-                                       mensaje = conditionMessage(e2)))
-              chat_append("chat",
-                "Hubo un problema técnico atendiendo tu consulta. Probá en un minuto.")
-            }
-          )
-        } else {
-          chat_append("chat",
-            "El servicio está saturado en este momento. Probá en un minuto.")
-        }
+        reintentar_con_respaldo(user_input, email)
       }
     )
   })

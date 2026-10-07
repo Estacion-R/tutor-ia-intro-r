@@ -30,7 +30,7 @@ chequear("provider (columna histórica)", identical(ev$provider, "ollama"))
 
 ev2 <- .evento_payload(list(
   ts = "t", type = "chat_message", email = "a@b.com", session_id = "s",
-  details = list(provider = "gemini", model = "gemini-2.5-flash", turno = 1L,
+  details = list(provider = "ollama_respaldo", model = "glm-5.3", turno = 1L,
                  categoria = "error", pide_respuesta = FALSE,
                  input_chars = 5L, input_text = "¿qué?")
 ))$event
@@ -59,7 +59,7 @@ chequear("el mensaje de error no se pierde", grepl("401", ev4$details))
 cat("latencia, fallback y error\n")
 ev5 <- .evento_payload(list(
   ts = "t", type = "chat_response", email = "a@b.com", session_id = "s",
-  details = list(provider = "gemini", model = "gemini-2.5-flash", turno = 2L,
+  details = list(provider = "ollama_respaldo", model = "glm-5.3", turno = 2L,
                  fallback = TRUE, latencia_primer_token_ms = 1234L,
                  latencia_total_ms = 5678L, response_text = "x")
 ))$event

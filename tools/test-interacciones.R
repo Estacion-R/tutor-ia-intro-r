@@ -16,7 +16,7 @@ ev <- function(ts, type, sid, d = NULL, email = "a@x.com", id = "a111111111aa")
   jsonlite::toJSON(list(ts = ts, type = type, email = email, session_id = sid,
                         alumna_id = id, cohorte = "c1", prompt_version = "v3.1-x",
                         details = d), auto_unbox = TRUE, null = "null")
-G <- "glm-5.2"; F <- "gemini-2.5-flash"
+G <- "glm-5.2"; F <- "glm-5.3"
 
 lineas <- c(
   # S1 turno 1: normal, latencia explícita, feedback up luego down (gana el último)
@@ -24,16 +24,19 @@ lineas <- c(
   ev("2026-10-08T10:00:20.000", "chat_response", "S1", list(provider = "ollama", model = G, turno = 1, fallback = FALSE, latencia_primer_token_ms = 12000, latencia_total_ms = 20000, response_chars = 10, response_text = "respuesta1")),
   ev("2026-10-08T10:00:25.000", "feedback", "S1", list(model = G, turno = 1, feedback = "up")),
   ev("2026-10-08T10:00:30.000", "feedback", "S1", list(model = G, turno = 1, feedback = "down")),
-  # S1 turno 2: Ollama falla, reintento con Gemini (mismo turno, 2 chat_message)
+  # S1 turno 2: glm-5.2 falla, reintento con el respaldo glm-5.3 (mismo turno, 2 chat_message)
   ev("2026-10-08T10:01:00.000", "chat_message", "S1", list(provider = "ollama", model = G, turno = 2, fallback = FALSE, categoria = "error", input_chars = 5, input_text = "falla")),
   ev("2026-10-08T10:01:01.000", "stream_failed", "S1", list(provider = "ollama", model = G, turno = 2, error = TRUE, mensaje = "HTTP 401")),
-  ev("2026-10-08T10:01:01.500", "stream_fallback_to_gemini", "S1"),
-  ev("2026-10-08T10:01:02.000", "chat_message", "S1", list(provider = "gemini", model = F, turno = 2, reintento = TRUE, fallback = TRUE, categoria = "error", input_chars = 5, input_text = "falla")),
-  ev("2026-10-08T10:01:06.000", "chat_response", "S1", list(provider = "gemini", model = F, turno = 2, fallback = TRUE, latencia_primer_token_ms = 1500, latencia_total_ms = 4000, response_chars = 9, response_text = "respuesta2")),
-  # S1 turno 3: ni Ollama ni Gemini responden (sin chat_response)
+  ev("2026-10-08T10:01:01.500", "stream_fallback_to_respaldo", "S1"),
+  ev("2026-10-08T10:01:02.000", "chat_message", "S1", list(provider = "ollama_respaldo", model = F, turno = 2, reintento = TRUE, fallback = TRUE, categoria = "error", input_chars = 5, input_text = "falla")),
+  ev("2026-10-08T10:01:06.000", "chat_response", "S1", list(provider = "ollama_respaldo", model = F, turno = 2, fallback = TRUE, latencia_primer_token_ms = 1500, latencia_total_ms = 4000, response_chars = 9, response_text = "respuesta2")),
+  # S1 turno 3: ni el principal ni el respaldo responden (sin chat_response)
   ev("2026-10-08T10:02:00.000", "chat_message", "S1", list(provider = "ollama", model = G, turno = 3, fallback = FALSE, input_text = "nada")),
   ev("2026-10-08T10:02:01.000", "stream_failed", "S1", list(provider = "ollama", model = G, turno = 3, error = TRUE, mensaje = "x")),
   ev("2026-10-08T10:02:02.000", "fallback_failed", "S1", list(turno = 3, error = TRUE, mensaje = "y")),
+  # S3: log histórico (previo al 07/10) con respaldo Gemini: debe seguir contando como fallback
+  ev("2026-09-20T09:00:00.000", "chat_message", "S3", list(provider = "gemini", model = "gemini-2.5-flash", turno = 1, input_text = "viejo"), email = "c@x.com", id = NULL),
+  ev("2026-09-20T09:00:05.000", "chat_response", "S3", list(provider = "gemini", model = "gemini-2.5-flash", turno = 1, response_text = "r-viejo"), email = "c@x.com", id = NULL),
   # S2: formato VIEJO (sin turno, model, latencias): 2 consultas con sus respuestas
   ev("2026-10-01T09:00:00.000", "chat_message", "S2", list(provider = "ollama", categoria = "otro", pide_respuesta = TRUE, input_chars = 3, input_text = "uno"), email = "b@x.com", id = NULL),
   ev("2026-10-01T09:00:10.000", "chat_response", "S2", list(provider = "ollama", response_chars = 7, response_text = "r-uno"), email = "b@x.com", id = NULL),
@@ -46,7 +49,7 @@ it <- armar_interacciones(df, incluir_email = TRUE)
 fila <- function(s, t) it[it$session_id == s & it$turno == t, ]
 
 cat("estructura\n")
-chequear("una fila por turno (3 de S1 + 2 de S2)", nrow(it) == 5)
+chequear("una fila por turno (3 de S1 + 2 de S2 + 1 de S3)", nrow(it) == 6)
 chequear("sin duplicar el turno reintentado", nrow(fila("S1", 2)) == 1)
 
 cat("turno normal\n")
@@ -60,7 +63,7 @@ chequear("alumna_id y cohorte", a$alumna_id == "a111111111aa" && a$cohorte == "c
 
 cat("turno con fallback tras error\n")
 b <- fila("S1", 2)
-chequear("respuesta de Gemini", b$modelo == F && b$respuesta == "respuesta2")
+chequear("respuesta del respaldo (glm-5.3)", b$modelo == F && b$respuesta == "respuesta2")
 chequear("fallback + error + reintento", b$fallback && b$error && b$reintento)
 chequear("latencia del chat_response final", b$latencia_total_ms == 4000L)
 
@@ -76,6 +79,9 @@ chequear("cada respuesta en su turno", v1$respuesta == "r-uno" && v2$respuesta =
 chequear("latencia total estimada por timestamps", v1$latencia_total_ms == 10000L && v2$latencia_total_ms == 30000L)
 chequear("primer token NA (no se midió)", is.na(v1$latencia_primer_token_ms))
 chequear("modelo NA, alumna_id NA", is.na(v1$modelo) && is.na(v1$alumna_id))
+
+cat("log histórico con Gemini\n")
+chequear("provider gemini sigue marcando fallback", isTRUE(fila("S3", 1)$fallback))
 
 cat("tabla apta para compartir\n")
 pub <- armar_interacciones(df)

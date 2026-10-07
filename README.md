@@ -18,7 +18,7 @@ Hecho por [Estación R](https://estacion-r.com) · escuela de datos especializad
 
 - [Shiny](https://shiny.posit.co/) + [shinychat](https://posit-dev.github.io/shinychat/) + [bslib](https://rstudio.github.io/bslib/)
 - [ellmer](https://ellmer.tidyverse.org/) como cliente LLM
-- **Modelo primario:** Google Gemini 2.5 Flash · **fallback:** Groq Llama 3.3 70B
+- **Modelo primario:** `glm-5.2` en Ollama Cloud · **respaldo:** `glm-5.3`, también en Ollama Cloud con la misma `OLLAMA_API_KEY` (dentro de la suscripción; no hay ningún proveedor externo a ella). Si el principal falla al iniciar o a mitad de la respuesta, la sesión pasa al respaldo con su historial; ver `ESTADO.md`
 - Persistencia de logs (opcional): Google Sheet vía Apps Script web app (escritura) + [googlesheets4](https://googlesheets4.tidyverse.org/) (lectura del dashboard)
 
 ## Correr localmente
@@ -26,7 +26,7 @@ Hecho por [Estación R](https://estacion-r.com) · escuela de datos especializad
 ```r
 # 1. Copiá la plantilla de config y completá los emails autorizados
 #    cp app/config.example.yml app/config.yml   (editá la allowlist)
-# 2. Asegurate de tener GOOGLE_API_KEY (y GROQ_API_KEY para el fallback) en ~/.Renviron
+# 2. Asegurate de tener OLLAMA_API_KEY en ~/.Renviron
 # 3. Desde la raíz del proyecto:
 shiny::runApp("app/")        # app del alumno
 shiny::runApp("app_admin/")  # dashboard de analytics (staff)
@@ -43,8 +43,7 @@ van como **variables de entorno** en la UI de Connect Cloud (no se commitean):
 
 | Variable | Para qué |
 |----------|----------|
-| `GOOGLE_API_KEY` | Modelo primario (Gemini) |
-| `GROQ_API_KEY` | Modelo de fallback (Groq) |
+| `OLLAMA_API_KEY` | Clave de Ollama Cloud: sirve para el modelo principal (`glm-5.2`) y el respaldo (`glm-5.3`) |
 | `TUTOR_EMAILS` | Allowlist de alumnos (emails separados por coma) |
 | `TUTOR_LOG_WEBHOOK_URL` | URL del Apps Script web app que persiste el log a la Sheet (opcional) |
 | `TUTOR_LOG_TOKEN` | Secreto compartido que valida ese Apps Script (opcional) |

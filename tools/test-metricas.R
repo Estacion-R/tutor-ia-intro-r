@@ -15,7 +15,7 @@ ev <- function(ts, type, email, sid, d = NULL)
   jsonlite::toJSON(list(ts = ts, type = type, email = email, session_id = sid,
                         details = d), auto_unbox = TRUE, null = "null")
 msg <- function(ts, e, s, t, m, txt)
-  ev(ts, "chat_message", e, s, list(provider = if (grepl("gemini", m)) "gemini" else "ollama",
+  ev(ts, "chat_message", e, s, list(provider = if (grepl("5.3", m)) "ollama_respaldo" else "ollama",
      model = m, turno = t, categoria = "concepto", pide_respuesta = FALSE,
      input_chars = nchar(txt), input_text = txt))
 resp <- function(ts, e, s, t, m)
@@ -23,7 +23,7 @@ resp <- function(ts, e, s, t, m)
 fb <- function(ts, e, s, t, m, v)
   ev(ts, "feedback", e, s, list(model = m, turno = t, feedback = v))
 
-G <- "glm-5.2"; F <- "gemini-2.5-flash"
+G <- "glm-5.2"; F <- "glm-5.3"
 lineas <- c(
   # alumna A: 3 turnos con glm, 👍 y 👎
   msg("2026-10-08T10:00:00.000", "a@x.com", "sA", 1, G, "hola"),
@@ -34,7 +34,7 @@ lineas <- c(
   fb("2026-10-08T10:01:35.000", "a@x.com", "sA", 2, G, "down"),
   msg("2026-10-08T10:02:00.000", "a@x.com", "sA", 3, G, "tercera"),
   resp("2026-10-08T10:02:10.000", "a@x.com", "sA", 3, G),
-  # alumna B: 1 turno atendido por Gemini (fallback), sin feedback
+  # alumna B: 1 turno atendido por el respaldo glm-5.3 (fallback), sin feedback
   msg("2026-10-08T11:00:00.000", "b@x.com", "sB", 1, F, "ayuda"),
   resp("2026-10-08T11:00:08.000", "b@x.com", "sB", 1, F),
   # staff: sesión de prueba (debe excluirse)
@@ -67,10 +67,10 @@ chequear("respuestas = 4", m$n_resp == 4)
 chequear("latencia total P50 sale de timestamps (filas sin medición explícita)", !is.na(m$lat_p50))
 chequear("sin errores en el log sintético", m$n_errores == 0)
 chequear("% calificadas = 50", isTRUE(all.equal(m$pct_calificadas, 50)))
-chequear("fallbacks a Gemini = 1", m$n_fallback_msgs == 1)
-chequear("modelos: glm-5.2 (3), gemini (1)",
+chequear("fallbacks = 1 (respaldo glm-5.3)", m$n_fallback_msgs == 1)
+chequear("modelos: glm-5.2 (3), glm-5.3 (1)",
          identical(sort(m$df_modelo$respuestas), c(1L, 3L)) &&
-         all(c("glm-5.2", "gemini-2.5-flash") %in% m$df_modelo$modelo))
+         all(c("glm-5.2", "glm-5.3") %in% m$df_modelo$modelo))
 chequear("turnos: sA=3, sB=1, sV=1 (vieja) → prom 5/3", isTRUE(all.equal(m$turnos_prom, 5/3)))
 chequear("df_turnos suma 3 sesiones", sum(m$df_turnos$sesiones) == 3)
 chequear("alumna A: 1 up 1 down", {

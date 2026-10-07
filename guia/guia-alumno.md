@@ -10,7 +10,7 @@ Te preparamos un **tutor virtual de R** especializado en el contenido del curso.
 
 | Forma | Qué es | Para quién | Esfuerzo |
 |---|---|---|---|
-| **Chat del curso** | ShinyApp con login por email · usa Gemini | Durante el curso | Cero |
+| **Chat del curso** | ShinyApp con login por email · usa un modelo de IA | Durante el curso | Cero |
 | **Templates** | Para copiar y pegar en cualquier IA gratis | Todos, post-curso también | Cero |
 | **Tutor personalizado** | Configurás una vez en ChatGPT/Claude/Gemini | Los que quieran más | 2 min de setup |
 
