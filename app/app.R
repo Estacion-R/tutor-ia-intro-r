@@ -208,6 +208,12 @@ ms_desde <- function(t0, t1) {
 # y mande. Corchetes = pendientes a resolver, no texto final.
 PLANTILLAS_AYUDA <- list(
   list(
+    id     = "ayuda_puntual",
+    icono  = "chat-dots",
+    titulo = "Tengo una duda puntual",
+    texto  = "Tengo una duda puntual: [escribí tu pregunta]"
+  ),
+  list(
     id     = "ayuda_error",
     icono  = "wrench",
     titulo = "Tengo un error",
@@ -383,7 +389,8 @@ ui <- page_fillable(
       class = "ayuda-cards",
       tags$p(
         class = "ayuda-hint",
-        "¿No sabés cómo arrancar? Tocá una tarjeta y reemplazá los ",
+        "Escribí tu pregunta directo en el chat de abajo. ",
+        "Si no sabés cómo arrancar, tocá una tarjeta y reemplazá los ",
         tags$code("[corchetes]"), " antes de mandar."
       ),
       lapply(PLANTILLAS_AYUDA, function(p) {
